@@ -63,27 +63,59 @@ const hasSignalEvidence = (signal?: TrackFlowSignalStatus): boolean =>
       signal?.conversion_request_detected
   );
 
+const hasSignalId = (signal?: TrackFlowSignalStatus): boolean =>
+  Boolean((signal?.ids || []).length > 0);
+
 const signalColor = (signal?: TrackFlowSignalStatus): string =>
-  hasSignalEvidence(signal) ? brand.green : brand.amber;
+  hasSignalId(signal) ? brand.green : brand.amber;
 
 const signalStatus = (signal?: TrackFlowSignalStatus): string => {
-  return hasSignalEvidence(signal)
-    ? 'Detected during browser-visible review'
-    : 'Not clearly detected during browser-side review';
+  if (hasSignalId(signal)) return 'ID detected in browser-visible scan';
+  if (hasSignalEvidence(signal)) return 'Signal seen, ID needs verification';
+  return 'Not clearly visible in browser scan';
 };
 
 const formatIds = (signal?: TrackFlowSignalStatus): string => {
   const ids = signal?.ids || [];
   if (ids.length) return ids.join(', ');
-  if (signal?.conversionRequestDetected || signal?.conversion_request_detected) return 'Conversion request observed';
+  if (signal?.conversionRequestDetected || signal?.conversion_request_detected) return 'Request seen, ID not clearly captured';
   return 'No browser-visible ID shown';
 };
 
-const hasGoogleAdsEvidence = (input: NormalizedTrackFlowVideoInput): boolean =>
-  hasSignalEvidence(input.trackingSignals.googleAds);
+const hasGoogleAdsId = (input: NormalizedTrackFlowVideoInput): boolean =>
+  hasSignalId(input.trackingSignals.googleAds);
+
+const hasMetaPixelId = (input: NormalizedTrackFlowVideoInput): boolean =>
+  hasSignalId(input.trackingSignals.metaPixel);
 
 const eventNameForCopy = (input: NormalizedTrackFlowVideoInput): string =>
   input.manualEvidence.expectedEvent || 'the expected event';
+
+const joinEnglishList = (items: string[]): string => {
+  if (items.length <= 1) return items[0] || '';
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+};
+
+const verificationDestinations = (input: NormalizedTrackFlowVideoInput): string[] => {
+  const destinations = ['GA4', 'GTM'];
+  if (hasGoogleAdsId(input)) destinations.push('Google Ads');
+  if (hasMetaPixelId(input)) destinations.push('Facebook Ads');
+  destinations.push('backend records');
+  return destinations;
+};
+
+const verificationDestinationCopy = (input: NormalizedTrackFlowVideoInput): string =>
+  joinEnglishList(verificationDestinations(input));
+
+const paidMediaStepLabel = (input: NormalizedTrackFlowVideoInput): string => {
+  const items: string[] = [];
+  if (hasGoogleAdsId(input)) items.push('Google Ads');
+  if (hasMetaPixelId(input)) items.push('Facebook Ads');
+
+  if (!items.length) return 'CRM / backend records';
+  return `${items.join(' / ')} / CRM`;
+};
 
 const formatStatus = (value: unknown, positiveText = 'Observed'): string => {
   const text = normalizeText(value, '', 60).toLowerCase();
@@ -149,7 +181,7 @@ const SignalCard: React.FC<{
     fps: 30,
     config: {damping: 13, stiffness: 170, mass: 0.62}
   });
-  const detected = hasSignalEvidence(signal);
+  const detected = hasSignalId(signal);
   const color = signalColor(signal);
   const scanning = localFrame >= delay && localFrame < delay + 18;
   const iconReady = localFrame >= delay + 14;
@@ -360,7 +392,18 @@ const EventValueCard: React.FC<{
       <div style={{position: 'relative', zIndex: 2, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center'}}>
         <div style={{minWidth: 0, flex: 1}}>
           <div style={{fontSize: 12, color, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.25}}>{label}</div>
-          <div style={{fontSize: 24, color: brand.text, fontWeight: 950, lineHeight: 1.06, marginTop: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+          <div
+            style={{
+              fontSize: value.length > 64 ? 18 : value.length > 38 ? 21 : 24,
+              color: brand.text,
+              fontWeight: 950,
+              lineHeight: 1.08,
+              marginTop: 8,
+              whiteSpace: 'normal',
+              overflow: 'hidden',
+              maxHeight: 54
+            }}
+          >
             {scanning ? (
               <span>
                 {scanLabel}
@@ -792,14 +835,12 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
 const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
   const actionVisual = getVisual(input, ['primary_action', 'secondary_action', 'action_result', 'tag_assistant', 'ga4_debugview_or_gtm_preview'], 1);
   const src = getVisualSrc(actionVisual);
-  const googleAdsPresent = hasGoogleAdsEvidence(input);
   const expectedObserved = isExpectedEventClearlyObserved(input);
   const observedResult = input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved);
+  const destinationCopy = verificationDestinationCopy(input);
   const confirmationText = expectedObserved
     ? `${eventNameForCopy(input)} was clearly observed in the operator review context`
-    : googleAdsPresent
-      ? `${eventNameForCopy(input)} was not clearly observed; confirm it inside GA4, GTM and Google Ads`
-      : `${eventNameForCopy(input)} was not clearly observed; confirm it inside GA4, GTM and backend records`;
+    : `${eventNameForCopy(input)} was not clearly observed; confirm it inside ${destinationCopy}`;
 
   return (
     <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
@@ -873,18 +914,14 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
 };
 
 const FinalScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
-  const googleAdsPresent = hasGoogleAdsEvidence(input);
   const expectedEvent = eventNameForCopy(input);
+  const destinationCopy = verificationDestinationCopy(input);
   const finalHeadline = setupFirst
     ? 'Verify the tracking foundation first, then test the selected business action.'
-    : googleAdsPresent
-      ? `Confirm ${expectedEvent} inside GA4, GTM, Google Ads, and backend records.`
-      : `Confirm ${expectedEvent} inside GA4, GTM, and backend records.`;
+    : `Confirm ${expectedEvent} inside ${destinationCopy}.`;
   const steps = setupFirst
     ? ['GTM / Google tag', 'GA4 page activity', 'Controlled event test']
-    : googleAdsPresent
-      ? ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM']
-      : ['GA4 DebugView', 'GTM Preview', 'CRM / backend records'];
+    : ['GA4 DebugView', 'GTM Preview', paidMediaStepLabel(input)];
 
   return (
     <AbsoluteFill
