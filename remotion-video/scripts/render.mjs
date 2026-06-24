@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import {spawnSync} from 'node:child_process';
-import {existsSync, mkdirSync, readFileSync, statSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, statSync, writeFileSync} from 'node:fs';
 import {dirname, resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const args = process.argv.slice(2);
 
@@ -17,6 +18,8 @@ const getArg = (name, fallback = '') => {
 };
 
 const inputPath = resolve(getArg('input', ''));
+const inputRootRaw = getArg('input-root', '');
+const inputRoot = inputRootRaw ? resolve(inputRootRaw) : '';
 const outputPath = resolve(getArg('output', 'out/evidence-video.mp4'));
 
 if (!inputPath || !existsSync(inputPath)) {
@@ -39,18 +42,54 @@ if (!parsed || typeof parsed !== 'object') {
 }
 
 const schemaVersion = String(parsed.schemaVersion || '').trim();
-if (schemaVersion && schemaVersion !== 'trackflow-video-input-v1') {
+const allowedSchemas = new Set(['trackflow-video-input-v1', 'trackflow-remotion-video-input-v1']);
+if (schemaVersion && !allowedSchemas.has(schemaVersion)) {
   console.error('[TrackFlow Render] Unsupported input schema.');
   process.exit(1);
 }
 
 const size = statSync(inputPath).size;
-if (size > 2 * 1024 * 1024) {
-  console.error('[TrackFlow Render] Input JSON is larger than the demo renderer limit.');
+if (size > 3 * 1024 * 1024) {
+  console.error('[TrackFlow Render] Input JSON is larger than the renderer limit.');
   process.exit(1);
 }
 
+const toAssetUrl = (value) => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^(?:https?:\/\/|data:image\/|blob:|file:)/i.test(text)) return text;
+  if (!inputRoot) return text;
+  const fullPath = resolve(inputRoot, text.replace(/^\/+/, ''));
+  if (!fullPath.startsWith(inputRoot)) return '';
+  return pathToFileURL(fullPath).toString();
+};
+
+const rawVisuals = Array.isArray(parsed.visuals)
+  ? parsed.visuals
+  : Array.isArray(parsed.screenshots)
+    ? parsed.screenshots
+    : Array.isArray(parsed.visualAssets)
+      ? parsed.visualAssets
+      : Array.isArray(parsed.visual_assets)
+        ? parsed.visual_assets
+        : [];
+
+const normalizedVisuals = rawVisuals.map((visual) => ({
+  ...visual,
+  role: visual.role || 'supporting_visual',
+  src: toAssetUrl(visual.src || visual.path),
+  path: toAssetUrl(visual.path || visual.src),
+})).filter((visual) => visual.src || visual.path);
+
+const normalized = {
+  ...parsed,
+  schemaVersion: 'trackflow-video-input-v1',
+  visuals: normalizedVisuals,
+};
+
 mkdirSync(dirname(outputPath), {recursive: true});
+const normalizedInputPath = resolve(dirname(outputPath), 'normalized-video-input.json');
+writeFileSync(normalizedInputPath, JSON.stringify(normalized, null, 2), 'utf8');
 
 console.log('[TrackFlow Render] Starting Remotion render.');
 console.log('[TrackFlow Render] Client data is intentionally not printed.');
@@ -66,7 +105,7 @@ const result = spawnSync(
     'src/Root.tsx',
     'TrackFlowEvidenceVideo',
     outputPath,
-    `--props=${inputPath}`,
+    `--props=${normalizedInputPath}`,
     '--codec=h264',
     '--overwrite'
   ],

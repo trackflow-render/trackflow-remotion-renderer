@@ -34,15 +34,17 @@ const brand = {
 const safeAssetSrc = (value: unknown): string => {
   const text = normalizeText(value, '', 500);
   if (!text) return '';
-  if (/^(?:https?:\/\/|data:image\/|blob:)/i.test(text)) return text;
+  if (/^(?:https?:\/\/|data:image\/|blob:|file:)/i.test(text)) return text;
   return staticFile(text.replace(/^\/+/, ''));
 };
 
 const getPrimaryVisual = (input: NormalizedTrackFlowVideoInput): string => {
   const roles = [
+    'website_overview',
     'website_homepage',
     'homepage',
     'primary_action',
+    'secondary_action',
     'action_result',
     'tag_assistant',
     'ga4_debugview_or_gtm_preview'
@@ -61,6 +63,7 @@ const getPrimaryVisual = (input: NormalizedTrackFlowVideoInput): string => {
 const getSecondVisual = (input: NormalizedTrackFlowVideoInput): string => {
   const roles = [
     'primary_action',
+    'secondary_action',
     'action_result',
     'tag_assistant',
     'ga4_debugview_or_gtm_preview',
