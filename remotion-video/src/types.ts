@@ -265,11 +265,26 @@ const getSignalCard = (
   return cards.find((card) => String(card?.key || '').toLowerCase() === key);
 };
 
+const statusIndicatesDetected = (...values: unknown[]): boolean => {
+  return values.some((value) => {
+    const text = normalizeText(value, '', 180).toLowerCase();
+    if (!text) return false;
+
+    const clearlyNegative =
+      /not clearly|not detected|not found|not observed|no .*detected|no .*observed|needs verification/.test(text);
+
+    const clearlyPositive =
+      /tag found|found|detected|script loaded|tag loaded|request observed|conversion request observed|analytics event request observed|event request observed|conversion\/remarketing request observed|loaded|observed/.test(text);
+
+    return clearlyPositive && !clearlyNegative;
+  });
+};
+
 const normalizeBool = (...values: unknown[]): boolean => {
   return values.some((value) => {
     if (typeof value === 'boolean') return value;
-    const text = normalizeText(value, '', 40).toLowerCase();
-    return ['true', 'yes', 'found', 'detected', 'observed', 'tag found'].includes(text);
+    const text = normalizeText(value, '', 80).toLowerCase();
+    return ['true', 'yes', 'found', 'detected', 'observed', 'tag found', 'tag loaded'].includes(text);
   });
 };
 
@@ -282,10 +297,18 @@ export const normalizeTrackingSignal = (
   extra?: Partial<TrackFlowSignalStatus>
 ): TrackFlowSignalStatus => {
   const ids = normalizeIdList(nestedSignal?.ids, flatIds, card?.ids);
+  const detectedFromStatus = statusIndicatesDetected(
+    nestedSignal?.statusText,
+    nestedSignal?.status_text,
+    card?.statusText,
+    card?.status_text,
+    nestedSignal?.note
+  );
   const detected = Boolean(
     normalizeBool(nestedSignal?.detected, flatDetected, card?.detected) ||
       ids.length ||
-      extra?.conversionRequestDetected
+      extra?.conversionRequestDetected ||
+      detectedFromStatus
   );
 
   return {

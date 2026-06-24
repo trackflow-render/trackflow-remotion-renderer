@@ -55,66 +55,81 @@ const getVisual = (
 const getVisualSrc = (visual?: TrackFlowVisualAsset): string =>
   safeAssetSrc(visual?.src || visual?.path || visual?.url);
 
+const normalizeSignalText = (signal?: TrackFlowSignalStatus): string =>
+  normalizeText(
+    [signal?.note, signal?.statusText, signal?.status_text, signal?.label].filter(Boolean).join(' '),
+    '',
+    260
+  ).toLowerCase();
+
+const signalTextSuggestsFound = (signal?: TrackFlowSignalStatus): boolean => {
+  const text = normalizeSignalText(signal);
+  if (!text) return false;
+  const clearlyNegative = /not clearly|not detected|not found|not observed|no .*detected|no .*observed|needs verification/.test(text);
+  const clearlyPositive = /tag found|found|detected|script loaded|tag loaded|request observed|conversion request observed|analytics event request observed|event request observed|conversion\/remarketing request observed|loaded|observed/.test(text);
+  return clearlyPositive && !clearlyNegative;
+};
+
 const hasSignalEvidence = (signal?: TrackFlowSignalStatus): boolean =>
   Boolean(
     signal?.detected ||
       (signal?.ids || []).length > 0 ||
       signal?.conversionRequestDetected ||
-      signal?.conversion_request_detected
+      signal?.conversion_request_detected ||
+      signalTextSuggestsFound(signal)
   );
 
-const hasSignalId = (signal?: TrackFlowSignalStatus): boolean =>
-  Boolean((signal?.ids || []).length > 0);
+const hasSignalId = (signal?: TrackFlowSignalStatus): boolean => (signal?.ids || []).length > 0;
 
 const signalColor = (signal?: TrackFlowSignalStatus): string =>
-  hasSignalId(signal) ? brand.green : brand.amber;
+  hasSignalEvidence(signal) ? brand.green : brand.amber;
 
 const signalStatus = (signal?: TrackFlowSignalStatus): string => {
-  if (hasSignalId(signal)) return 'ID detected in browser-visible scan';
-  if (hasSignalEvidence(signal)) return 'Signal seen, ID needs verification';
-  return 'Not clearly visible in browser scan';
+  return hasSignalEvidence(signal)
+    ? 'Detected during browser-visible review'
+    : 'Not clearly visible in browser scan';
 };
 
 const formatIds = (signal?: TrackFlowSignalStatus): string => {
   const ids = signal?.ids || [];
   if (ids.length) return ids.join(', ');
-  if (signal?.conversionRequestDetected || signal?.conversion_request_detected) return 'Request seen, ID not clearly captured';
-  return 'No browser-visible ID shown';
+  if (signal?.conversionRequestDetected || signal?.conversion_request_detected) return 'Conversion request observed';
+  if (hasSignalEvidence(signal)) return 'Signal found; ID not shown';
+  return 'No browser-visible ID found';
 };
 
-const hasGoogleAdsId = (input: NormalizedTrackFlowVideoInput): boolean =>
-  hasSignalId(input.trackingSignals.googleAds);
+const hasGoogleAdsEvidence = (input: NormalizedTrackFlowVideoInput): boolean =>
+  hasSignalEvidence(input.trackingSignals.googleAds);
 
-const hasMetaPixelId = (input: NormalizedTrackFlowVideoInput): boolean =>
-  hasSignalId(input.trackingSignals.metaPixel);
+const hasMetaPixelEvidence = (input: NormalizedTrackFlowVideoInput): boolean =>
+  hasSignalEvidence(input.trackingSignals.metaPixel);
 
 const eventNameForCopy = (input: NormalizedTrackFlowVideoInput): string =>
   input.manualEvidence.expectedEvent || 'the expected event';
 
-const joinEnglishList = (items: string[]): string => {
-  if (items.length <= 1) return items[0] || '';
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
+const joinTargets = (targets: string[]): string => {
+  const unique = targets.filter((target, index) => targets.indexOf(target) === index);
+  if (unique.length <= 1) return unique[0] || '';
+  if (unique.length === 2) return `${unique[0]} and ${unique[1]}`;
+  return `${unique.slice(0, -1).join(', ')}, and ${unique[unique.length - 1]}`;
 };
 
-const verificationDestinations = (input: NormalizedTrackFlowVideoInput): string[] => {
-  const destinations = ['GA4', 'GTM'];
-  if (hasGoogleAdsId(input)) destinations.push('Google Ads');
-  if (hasMetaPixelId(input)) destinations.push('Facebook Ads');
-  destinations.push('backend records');
-  return destinations;
+const confirmationTargetsText = (input: NormalizedTrackFlowVideoInput): string => {
+  const targets = ['GA4', 'GTM'];
+  if (hasGoogleAdsEvidence(input)) targets.push('Google Ads');
+  if (hasMetaPixelEvidence(input)) targets.push('Meta Pixel / Facebook Ads');
+  targets.push('backend records');
+  return joinTargets(targets);
 };
 
-const verificationDestinationCopy = (input: NormalizedTrackFlowVideoInput): string =>
-  joinEnglishList(verificationDestinations(input));
+const confirmationStepCards = (input: NormalizedTrackFlowVideoInput): string[] => {
+  const googleAdsPresent = hasGoogleAdsEvidence(input);
+  const metaPixelPresent = hasMetaPixelEvidence(input);
 
-const paidMediaStepLabel = (input: NormalizedTrackFlowVideoInput): string => {
-  const items: string[] = [];
-  if (hasGoogleAdsId(input)) items.push('Google Ads');
-  if (hasMetaPixelId(input)) items.push('Facebook Ads');
-
-  if (!items.length) return 'CRM / backend records';
-  return `${items.join(' / ')} / CRM`;
+  if (googleAdsPresent && metaPixelPresent) return ['GA4 + GTM', 'Google Ads + Meta', 'CRM / backend records'];
+  if (googleAdsPresent) return ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM'];
+  if (metaPixelPresent) return ['GA4 DebugView', 'GTM Preview', 'Meta Pixel / CRM'];
+  return ['GA4 DebugView', 'GTM Preview', 'CRM / backend records'];
 };
 
 const formatStatus = (value: unknown, positiveText = 'Observed'): string => {
@@ -172,7 +187,10 @@ const SignalCard: React.FC<{
   signal?: TrackFlowSignalStatus;
   delay: number;
   sceneStart?: number;
-}> = ({label, signal, delay, sceneStart = 80}) => {
+  forceWarning?: boolean;
+  statusOverride?: string;
+  detailOverride?: string;
+}> = ({label, signal, delay, sceneStart = 80, forceWarning = false, statusOverride, detailOverride}) => {
   const frame = useCurrentFrame();
   const localFrame = frame - sceneStart;
   const cardFrame = Math.max(0, localFrame - delay);
@@ -181,8 +199,8 @@ const SignalCard: React.FC<{
     fps: 30,
     config: {damping: 13, stiffness: 170, mass: 0.62}
   });
-  const detected = hasSignalId(signal);
-  const color = signalColor(signal);
+  const detected = forceWarning ? false : hasSignalEvidence(signal);
+  const color = forceWarning ? brand.amber : signalColor(signal);
   const scanning = localFrame >= delay && localFrame < delay + 18;
   const iconReady = localFrame >= delay + 14;
   const pulse = interpolate(cardFrame % 46, [0, 7, 18, 46], [0, 1, 0.35, 0], {
@@ -281,11 +299,11 @@ const SignalCard: React.FC<{
               <span style={{opacity: dotThree}}>.</span>
             </span>
           ) : (
-            signalStatus(signal)
+            statusOverride || signalStatus(signal)
           )}
         </div>
         <div style={{fontSize: 11, color: brand.muted, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
-          {iconReady ? formatIds(signal) : 'Reading browser-visible tag data'}
+          {iconReady ? (detailOverride || formatIds(signal)) : 'Reading browser-visible tag data'}
         </div>
       </div>
     </div>
@@ -392,18 +410,7 @@ const EventValueCard: React.FC<{
       <div style={{position: 'relative', zIndex: 2, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center'}}>
         <div style={{minWidth: 0, flex: 1}}>
           <div style={{fontSize: 12, color, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.25}}>{label}</div>
-          <div
-            style={{
-              fontSize: value.length > 64 ? 18 : value.length > 38 ? 21 : 24,
-              color: brand.text,
-              fontWeight: 950,
-              lineHeight: 1.08,
-              marginTop: 8,
-              whiteSpace: 'normal',
-              overflow: 'hidden',
-              maxHeight: 54
-            }}
-          >
+          <div style={{fontSize: 24, color: brand.text, fontWeight: 950, lineHeight: 1.06, marginTop: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
             {scanning ? (
               <span>
                 {scanLabel}
@@ -785,6 +792,7 @@ const IntroScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
 const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
   const homepage = getVisual(input, ['website_overview', 'website_homepage', 'homepage'], 0);
   const src = getVisualSrc(homepage);
+  const forceGa4SetupWarning = setupFirst && !hasSignalId(input.trackingSignals.ga4);
 
   return (
     <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
@@ -811,7 +819,15 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
               </div>
             </div>
             <div style={{display: 'grid', gap: 10}}>
-              <SignalCard label="GA4" signal={input.trackingSignals.ga4} delay={18} sceneStart={80} />
+              <SignalCard
+                label="GA4"
+                signal={input.trackingSignals.ga4}
+                delay={18}
+                sceneStart={80}
+                forceWarning={forceGa4SetupWarning}
+                statusOverride={forceGa4SetupWarning ? 'GA4 foundation needs verification' : undefined}
+                detailOverride={forceGa4SetupWarning ? 'No GA4 Measurement ID verified' : undefined}
+              />
               <SignalCard label="GTM" signal={input.trackingSignals.gtm} delay={48} sceneStart={80} />
               <SignalCard label="Google Ads" signal={input.trackingSignals.googleAds} delay={78} sceneStart={80} />
               <SignalCard label="Meta Pixel" signal={input.trackingSignals.metaPixel} delay={108} sceneStart={80} />
@@ -837,10 +853,10 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
   const src = getVisualSrc(actionVisual);
   const expectedObserved = isExpectedEventClearlyObserved(input);
   const observedResult = input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved);
-  const destinationCopy = verificationDestinationCopy(input);
+  const targetsText = confirmationTargetsText(input);
   const confirmationText = expectedObserved
     ? `${eventNameForCopy(input)} was clearly observed in the operator review context`
-    : `${eventNameForCopy(input)} was not clearly observed; confirm it inside ${destinationCopy}`;
+    : `${eventNameForCopy(input)} was not clearly observed; confirm it inside ${targetsText}`;
 
   return (
     <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
@@ -915,13 +931,13 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
 
 const FinalScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
   const expectedEvent = eventNameForCopy(input);
-  const destinationCopy = verificationDestinationCopy(input);
+  const targetsText = confirmationTargetsText(input);
   const finalHeadline = setupFirst
     ? 'Verify the tracking foundation first, then test the selected business action.'
-    : `Confirm ${expectedEvent} inside ${destinationCopy}.`;
+    : `Confirm ${expectedEvent} inside ${targetsText}.`;
   const steps = setupFirst
     ? ['GTM / Google tag', 'GA4 page activity', 'Controlled event test']
-    : ['GA4 DebugView', 'GTM Preview', paidMediaStepLabel(input)];
+    : confirmationStepCards(input);
 
   return (
     <AbsoluteFill
