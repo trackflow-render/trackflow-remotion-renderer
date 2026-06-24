@@ -1,0 +1,177 @@
+name: Render TrackFlow Video
+run-name: TrackFlow video ${{ inputs.source }} ${{ inputs.package_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Render source"
+        required: true
+        default: "demo_ga4"
+        type: choice
+        options:
+          - demo_ga4
+          - demo_setup
+          - package
+      package_id:
+        description: "Opaque TrackFlow package id. Required only when source=package. Do not put client names here."
+        required: false
+        default: ""
+        type: string
+
+concurrency:
+  group: trackflow-video-render
+  cancel-in-progress: false
+
+jobs:
+  render:
+    name: Render encrypted video
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      AGE_RECIPIENT: ${{ secrets.TRACKFLOW_VIDEO_AGE_RECIPIENT || vars.TRACKFLOW_VIDEO_AGE_RECIPIENT }}
+      PACKAGE_BASE_URL: ${{ secrets.TRACKFLOW_PACKAGE_BASE_URL }}
+      PACKAGE_TOKEN: ${{ secrets.TRACKFLOW_PACKAGE_DOWNLOAD_TOKEN }}
+
+    steps:
+      - name: Checkout generic renderer
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: remotion-video/package-lock.json
+
+      - name: Install renderer dependencies
+        working-directory: remotion-video
+        run: npm install --no-audit --no-fund
+
+      - name: Select input
+        id: select_input
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_mode="${{ github.event.inputs.source }}"
+          package_id="${{ github.event.inputs.package_id }}"
+
+          if [ "$source_mode" = "package" ]; then
+            if [ -z "$package_id" ]; then
+              echo "package_id is required when source=package."
+              exit 1
+            fi
+            if [[ ! "$package_id" =~ ^[a-zA-Z0-9._-]{8,80}$ ]]; then
+              echo "package_id is invalid."
+              exit 1
+            fi
+            if [ -z "$PACKAGE_BASE_URL" ] || [ -z "$PACKAGE_TOKEN" ]; then
+              echo "TRACKFLOW_PACKAGE_BASE_URL and TRACKFLOW_PACKAGE_DOWNLOAD_TOKEN must be configured as repository secrets."
+              exit 1
+            fi
+            echo "input_json=/tmp/trackflow-video-input/video-input.json" >> "$GITHUB_OUTPUT"
+            echo "input_root=/tmp/trackflow-video-input" >> "$GITHUB_OUTPUT"
+          elif [ "$source_mode" = "demo_setup" ]; then
+            echo "input_json=remotion-video/src/fixtures/no-ga4.json" >> "$GITHUB_OUTPUT"
+            echo "input_root=" >> "$GITHUB_OUTPUT"
+          else
+            echo "input_json=remotion-video/src/fixtures/ga4-present.json" >> "$GITHUB_OUTPUT"
+            echo "input_root=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download TrackFlow package
+        if: ${{ github.event.inputs.source == 'package' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/trackflow-video-input
+          package_id="${{ github.event.inputs.package_id }}"
+          base_url="${PACKAGE_BASE_URL%/}"
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${PACKAGE_TOKEN}" \
+            --output /tmp/trackflow-video-input.zip \
+            "${base_url}/api/evidence-video/package/${package_id}"
+
+      - name: Safely extract TrackFlow package
+        if: ${{ github.event.inputs.source == 'package' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, pathlib, zipfile, sys
+          zip_path = pathlib.Path('/tmp/trackflow-video-input.zip')
+          out_dir = pathlib.Path('/tmp/trackflow-video-input')
+          if not zip_path.exists() or zip_path.stat().st_size <= 0:
+              raise SystemExit('Package ZIP was not downloaded.')
+          if zip_path.stat().st_size > 30 * 1024 * 1024:
+              raise SystemExit('Package ZIP is too large.')
+          total = 0
+          with zipfile.ZipFile(zip_path) as z:
+              names = z.namelist()
+              if 'video-input.json' not in names:
+                  raise SystemExit('video-input.json missing from package.')
+              if len(names) > 20:
+                  raise SystemExit('Package contains too many files.')
+              for item in z.infolist():
+                  name = item.filename.replace('\\', '/')
+                  if not name or name.startswith('/') or '..' in pathlib.PurePosixPath(name).parts:
+                      raise SystemExit('Unsafe path in package.')
+                  if not (name == 'video-input.json' or name.startswith('assets/')):
+                      raise SystemExit('Unexpected file in package.')
+                  total += item.file_size
+                  if item.file_size > 8 * 1024 * 1024:
+                      raise SystemExit('A package file is too large.')
+                  if total > 32 * 1024 * 1024:
+                      raise SystemExit('Package extracted size is too large.')
+              z.extractall(out_dir)
+          PY
+
+      - name: Render MP4
+        working-directory: remotion-video
+        run: |
+          set -euo pipefail
+          input_root="${{ steps.select_input.outputs.input_root }}"
+          if [ -n "$input_root" ]; then
+            node scripts/render.mjs \
+              --input "${{ steps.select_input.outputs.input_json }}" \
+              --input-root "$input_root" \
+              --output "./out/evidence-video.mp4"
+          else
+            node scripts/render.mjs \
+              --input "../${{ steps.select_input.outputs.input_json }}" \
+              --output "./out/evidence-video.mp4"
+          fi
+
+      - name: Install age
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y age >/dev/null
+
+      - name: Encrypt MP4
+        working-directory: remotion-video
+        run: |
+          set -euo pipefail
+          if [ -z "${AGE_RECIPIENT}" ]; then
+            echo "TRACKFLOW_VIDEO_AGE_RECIPIENT is missing."
+            exit 1
+          fi
+          age --recipient "${AGE_RECIPIENT}" \
+            --output "./out/evidence-video.mp4.age" \
+            "./out/evidence-video.mp4"
+          rm -f "./out/evidence-video.mp4"
+
+      - name: Upload encrypted artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: trackflow-video-${{ github.run_id }}
+          path: remotion-video/out/evidence-video.mp4.age
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove temporary render data
+        if: always()
+        run: |
+          rm -rf remotion-video/out
+          rm -rf /tmp/trackflow-video-*
