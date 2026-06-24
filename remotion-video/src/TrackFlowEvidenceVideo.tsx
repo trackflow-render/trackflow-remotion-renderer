@@ -34,7 +34,10 @@ const brand = {
 const safeAssetSrc = (value: unknown): string => {
   const text = normalizeText(value, '', 500);
   if (!text) return '';
-  if (/^(?:https?:\/\/|data:image\/|blob:|file:)/i.test(text)) return text;
+  if (/^(?:https?:\/\/|data:image\/|blob:)/i.test(text)) return text;
+  // Local file:// paths should be rewritten by scripts/render.mjs before rendering.
+  // Returning an empty string here prevents Chrome from trying to load blocked local resources.
+  if (/^file:/i.test(text)) return '';
   return staticFile(text.replace(/^\/+/, ''));
 };
 
@@ -218,9 +221,23 @@ const WebsiteVisual: React.FC<{
   src: string;
   title: string;
   subtitle: string;
-}> = ({src, title, subtitle}) => {
+  focusLabel?: string;
+}> = ({src, title, subtitle, focusLabel = 'Review in progress'}) => {
   const frame = useCurrentFrame();
-  const zoom = interpolate(frame, [0, 1500], [1.03, 1.09], {
+
+  const scrollPhase = frame % 480;
+  const scrollY = interpolate(scrollPhase, [0, 70, 330, 480], [0, 0, -28, -28], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+
+  const scanY = interpolate(frame % 150, [0, 150], [-70, 610], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+
+  const pulse = interpolate(Math.sin(frame / 12), [-1, 1], [0.45, 1]);
+  const focusTop = interpolate(frame % 360, [0, 120, 240, 360], [32, 32, 58, 58], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp'
   });
@@ -238,51 +255,181 @@ const WebsiteVisual: React.FC<{
         boxShadow: '0 28px 90px rgba(0, 0, 0, 0.38)'
       }}
     >
-      {src ? (
-        <Img
-          src={src}
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            transform: `scale(${zoom})`,
-            filter: 'saturate(1.06) contrast(1.03)'
-          }}
-        />
-      ) : (
+      <div
+        style={{
+          position: 'absolute',
+          inset: 16,
+          borderRadius: 22,
+          overflow: 'hidden',
+          border: '1px solid rgba(226, 232, 240, 0.18)',
+          background: 'rgba(2, 6, 23, 0.72)'
+        }}
+      >
         <div
           style={{
-            width: '100%',
-            height: '100%',
-            display: 'grid',
-            placeItems: 'center',
-            color: brand.muted,
-            fontSize: 26,
-            textAlign: 'center',
-            padding: 50
+            height: 34,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '0 14px',
+            background: 'rgba(15, 23, 42, 0.92)',
+            borderBottom: '1px solid rgba(148, 163, 184, 0.18)'
           }}
         >
-          Website visual will appear here
+          {[brand.red, brand.amber, brand.green].map((color) => (
+            <div
+              key={color}
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: color,
+                opacity: 0.9
+              }}
+            />
+          ))}
+          <div
+            style={{
+              marginLeft: 8,
+              height: 17,
+              flex: 1,
+              borderRadius: 999,
+              background: 'rgba(148, 163, 184, 0.13)',
+              color: 'rgba(226, 232, 240, 0.62)',
+              fontSize: 10,
+              display: 'flex',
+              alignItems: 'center',
+              paddingLeft: 12,
+              fontWeight: 700,
+              letterSpacing: 0.3
+            }}
+          >
+            {focusLabel}
+          </div>
         </div>
-      )}
+
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 34,
+            bottom: 0,
+            overflow: 'hidden',
+            background: 'rgba(8, 18, 34, 0.9)'
+          }}
+        >
+          {src ? (
+            <>
+              <Img
+                src={src}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  minHeight: '128%',
+                  height: 'auto',
+                  transform: `translateY(${scrollY}%) scale(1.015)`,
+                  transformOrigin: 'top center',
+                  filter: 'saturate(1.08) contrast(1.04)',
+                  willChange: 'transform'
+                }}
+              />
+
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 26,
+                  right: 26,
+                  top: `${focusTop}%`,
+                  height: 92,
+                  borderRadius: 18,
+                  border: `2px solid rgba(56, 189, 248, ${0.34 + pulse * 0.22})`,
+                  boxShadow: `0 0 ${18 + pulse * 16}px rgba(56, 189, 248, 0.22)`,
+                  background: 'rgba(56, 189, 248, 0.055)'
+                }}
+              />
+
+              <div
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: scanY,
+                  height: 92,
+                  background:
+                    'linear-gradient(180deg, transparent, rgba(56, 189, 248, 0.30), transparent)',
+                  mixBlendMode: 'screen',
+                  filter: 'blur(1px)'
+                }}
+              />
+            </>
+          ) : (
+            <div
+              style={{
+                width: '100%',
+                height: '100%',
+                display: 'grid',
+                placeItems: 'center',
+                color: brand.muted,
+                fontSize: 26,
+                textAlign: 'center',
+                padding: 50
+              }}
+            >
+              Website visual review will appear here
+            </div>
+          )}
+        </div>
+      </div>
 
       <div
         style={{
           position: 'absolute',
           inset: 0,
           background:
-            'linear-gradient(90deg, rgba(7, 17, 31, 0.30), transparent 45%), linear-gradient(0deg, rgba(7, 17, 31, 0.78), transparent 45%)'
+            'linear-gradient(90deg, rgba(7, 17, 31, 0.18), transparent 45%), linear-gradient(0deg, rgba(7, 17, 31, 0.86), transparent 48%)',
+          pointerEvents: 'none'
         }}
       />
 
       <div
         style={{
           position: 'absolute',
-          left: 26,
-          right: 26,
+          left: 30,
+          right: 30,
           bottom: 24
         }}
       >
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '7px 11px',
+            borderRadius: 999,
+            background: 'rgba(56, 189, 248, 0.13)',
+            border: '1px solid rgba(56, 189, 248, 0.28)',
+            color: brand.blue,
+            fontSize: 12,
+            fontWeight: 950,
+            textTransform: 'uppercase',
+            letterSpacing: 1.4,
+            marginBottom: 10
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 999,
+              background: brand.green,
+              boxShadow: '0 0 14px rgba(34, 197, 94, 0.65)'
+            }}
+          />
+          Active scan
+        </div>
         <div
           style={{
             color: brand.white,
@@ -545,6 +692,7 @@ const ScanScene: React.FC<{
           src={primaryVisual}
           title={input.businessName}
           subtitle="Website visual review in progress"
+          focusLabel="Scanning page structure"
         />
 
         <div
@@ -612,7 +760,7 @@ const ScanScene: React.FC<{
                     letterSpacing: 1.3
                   }}
                 >
-                  {setupFirst ? 'Setup-first finding' : 'Manual event review'}
+                  {setupFirst ? 'Setup-first finding' : 'Selected action review'}
                 </div>
                 <div
                   style={{
@@ -664,7 +812,8 @@ const EventScene: React.FC<{
         <WebsiteVisual
           src={secondVisual}
           title={input.manualEvidence.actionLabel || 'Selected business action'}
-          subtitle={`Tool used: ${input.manualEvidence.toolUsed || 'Manual browser-visible review'}`}
+          subtitle={`Tool used: ${input.manualEvidence.toolUsed || 'Browser-visible review'}`}
+          focusLabel="Checking selected action"
         />
 
         <div
@@ -847,6 +996,7 @@ const SetupFirstScene: React.FC<{
           src={secondVisual}
           title="Tracking foundation review"
           subtitle="Event-level testing should come after setup is confirmed"
+          focusLabel="Checking tracking readiness"
         />
 
         <div

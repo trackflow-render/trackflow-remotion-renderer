@@ -151,15 +151,25 @@ const preparePublicAsset = (rawValue, index) => {
 
   copyFileSync(sourcePath, destPath);
 
+  // Remotion staticFile() expects a path relative to remotion-video/public.
   return `${publicBaseRel}/assets/${outName}`;
 };
 
-const sanitizeVisualArray = (visuals) => {
+const getVisualArraysFromInput = (input) => {
+  const arrays = [];
+  for (const key of ['visuals', 'visualAssets', 'visual_assets', 'screenshots']) {
+    if (Array.isArray(input[key])) arrays.push(input[key]);
+  }
+  return arrays;
+};
+
+const sanitizeVisualArray = (visuals, startIndex = 0) => {
   if (!Array.isArray(visuals)) return [];
 
-  return visuals.slice(0, 8).map((visual, index) => {
+  return visuals.slice(0, 8).map((visual, localIndex) => {
     if (!visual || typeof visual !== 'object') return visual;
 
+    const index = startIndex + localIndex;
     const raw = visual.src || visual.path || visual.url || '';
     const publicSrc = preparePublicAsset(raw, index);
 
@@ -171,28 +181,49 @@ const sanitizeVisualArray = (visuals) => {
   });
 };
 
+const buildUnifiedVisuals = (input) => {
+  const arrays = getVisualArraysFromInput(input);
+  const seen = new Set();
+  const unified = [];
+  let offset = 0;
+
+  for (const array of arrays) {
+    const sanitizedItems = sanitizeVisualArray(array, offset);
+    offset += sanitizedItems.length;
+
+    for (const item of sanitizedItems) {
+      if (!item || typeof item !== 'object') continue;
+      const key = `${item.role || ''}|${item.src || item.path || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unified.push(item);
+    }
+  }
+
+  return unified.slice(0, 8);
+};
+
 rmSync(renderWorkDir, {recursive: true, force: true});
 rmSync(publicBaseDir, {recursive: true, force: true});
 mkdirSync(renderWorkDir, {recursive: true});
 mkdirSync(publicAssetsDir, {recursive: true});
 mkdirSync(dirname(outputPath), {recursive: true});
 
+const unifiedVisuals = buildUnifiedVisuals(parsed);
+
 const sanitized = {
   ...parsed,
-  schemaVersion: 'trackflow-video-input-v1'
+  schemaVersion: 'trackflow-video-input-v1',
+  // Force all renderer versions to consume the same cleaned asset list.
+  visuals: unifiedVisuals,
+  visualAssets: unifiedVisuals,
+  visual_assets: unifiedVisuals
 };
-
-if (Array.isArray(parsed.visuals)) {
-  sanitized.visuals = sanitizeVisualArray(parsed.visuals);
-}
-
-if (Array.isArray(parsed.screenshots)) {
-  sanitized.screenshots = sanitizeVisualArray(parsed.screenshots);
-}
 
 writeFileSync(sanitizedInputPath, JSON.stringify(sanitized), 'utf8');
 
 console.log('[TrackFlow Render] Starting Remotion render.');
+console.log(`[TrackFlow Render] Visual assets prepared: ${unifiedVisuals.length}`);
 console.log('[TrackFlow Render] Client data and asset paths are intentionally not printed.');
 
 const remotionBin = process.platform === 'win32'

@@ -203,7 +203,7 @@ export const normalizeTrackingSignal = (
 };
 
 const getVisuals = (input: TrackFlowVideoInput): TrackFlowVisualAsset[] =>
-  input.visuals || input.screenshots || input.visualAssets || input.visual_assets || [];
+  input.visuals || input.visualAssets || input.visual_assets || input.screenshots || [];
 
 const getManualEvidence = (input: TrackFlowVideoInput): TrackFlowManualEvidence =>
   input.manualEvidence || input.manual_evidence || input.selectedAction || input.selected_action || {};
@@ -280,7 +280,7 @@ export const normalizeVideoInput = (
       .slice(0, 5),
     clientSafeDisclaimer: normalizeText(
       input.clientSafeDisclaimer || input.client_safe_disclaimer,
-      'Browser-visible review and operator-provided evidence only. Final account-side confirmation is still recommended.',
+      'Browser-visible review only. Final account-side confirmation is still recommended.',
       220
     )
   };
