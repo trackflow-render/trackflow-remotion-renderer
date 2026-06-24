@@ -38,7 +38,7 @@ jobs:
 
       - name: Install renderer dependencies
         working-directory: remotion-video
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Select demo input
         id: select_input
