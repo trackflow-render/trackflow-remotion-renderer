@@ -14,16 +14,17 @@ import {
   normalizeVideoInput,
   type NormalizedTrackFlowVideoInput,
   type TrackFlowSignalStatus,
-  type TrackFlowVideoInput
+  type TrackFlowVideoInput,
+  type TrackFlowVisualAsset
 } from './types';
 
 const brand = {
-  bg: '#07111f',
-  card: 'rgba(15, 28, 49, 0.86)',
-  cardSoft: 'rgba(25, 46, 78, 0.74)',
-  line: 'rgba(148, 163, 184, 0.25)',
+  bg: '#06111f',
+  panel: 'rgba(9, 18, 33, 0.88)',
+  panelSoft: 'rgba(15, 28, 50, 0.78)',
+  line: 'rgba(148, 163, 184, 0.24)',
   text: '#f8fafc',
-  muted: '#aab7ca',
+  muted: '#a8b4c7',
   blue: '#38bdf8',
   green: '#22c55e',
   amber: '#f59e0b',
@@ -35,212 +36,226 @@ const safeAssetSrc = (value: unknown): string => {
   const text = normalizeText(value, '', 500);
   if (!text) return '';
   if (/^(?:https?:\/\/|data:image\/|blob:)/i.test(text)) return text;
-  // Local file:// paths should be rewritten by scripts/render.mjs before rendering.
-  // Returning an empty string here prevents Chrome from trying to load blocked local resources.
   if (/^file:/i.test(text)) return '';
   return staticFile(text.replace(/^\/+/, ''));
 };
 
-const getPrimaryVisual = (input: NormalizedTrackFlowVideoInput): string => {
-  const roles = [
-    'website_overview',
-    'website_homepage',
-    'homepage',
-    'primary_action',
-    'secondary_action',
-    'action_result',
-    'tag_assistant',
-    'ga4_debugview_or_gtm_preview'
-  ];
-
+const getVisual = (
+  input: NormalizedTrackFlowVideoInput,
+  roles: string[],
+  fallbackIndex = 0
+): TrackFlowVisualAsset | undefined => {
   for (const role of roles) {
     const found = input.visuals.find((visual) => visual.role === role);
-    const src = safeAssetSrc(found?.src || found?.path);
-    if (src) return src;
+    if (safeAssetSrc(found?.src || found?.path || found?.url)) return found;
   }
-
-  const first = input.visuals[0];
-  return safeAssetSrc(first?.src || first?.path);
+  return input.visuals[fallbackIndex] || input.visuals[0];
 };
 
-const getSecondVisual = (input: NormalizedTrackFlowVideoInput): string => {
-  const roles = [
-    'primary_action',
-    'secondary_action',
-    'action_result',
-    'tag_assistant',
-    'ga4_debugview_or_gtm_preview',
-    'google_ads_diagnostics',
-    'supporting_visual'
-  ];
+const getVisualSrc = (visual?: TrackFlowVisualAsset): string =>
+  safeAssetSrc(visual?.src || visual?.path || visual?.url);
 
-  for (const role of roles) {
-    const found = input.visuals.find((visual) => visual.role === role);
-    const src = safeAssetSrc(found?.src || found?.path);
-    if (src) return src;
-  }
+const signalColor = (signal?: TrackFlowSignalStatus): string =>
+  signal?.detected ? brand.green : brand.amber;
 
-  const second = input.visuals[1] || input.visuals[0];
-  return safeAssetSrc(second?.src || second?.path);
-};
-
-const statusLabel = (signal?: TrackFlowSignalStatus): string => {
+const signalStatus = (signal?: TrackFlowSignalStatus): string => {
+  if (signal?.note) return signal.note;
   return signal?.detected
     ? 'Detected during browser-visible review'
     : 'Not clearly detected during browser-side review';
 };
 
-const statusColor = (detected?: boolean): string => {
-  return detected ? brand.green : brand.amber;
-};
-
 const formatIds = (signal?: TrackFlowSignalStatus): string => {
   const ids = signal?.ids || [];
-  return ids.length ? ids.join(', ') : 'No browser-visible ID shown';
+  if (ids.length) return ids.join(', ');
+  if (signal?.conversionRequestDetected) return 'Conversion request observed';
+  return 'No browser-visible ID shown';
 };
 
-const FadeIn: React.FC<{
-  children: React.ReactNode;
-  from: number;
-  duration?: number;
-  y?: number;
-}> = ({children, from, duration = 20, y = 18}) => {
+const formatStatus = (value: unknown, positiveText = 'Observed'): string => {
+  const text = normalizeText(value, '', 60).toLowerCase();
+  if (!text) return 'Not clearly observed';
+  if (['yes', 'true', 'observed', 'event_observed', 'ok'].includes(text)) return positiveText;
+  if (['no', 'false', 'not_observed', 'no_clear_event_observed', 'not clearly observed'].includes(text)) {
+    return 'Not clearly observed';
+  }
+  if (text === 'not_sure') return 'Needs verification';
+  if (text === 'not_tested') return 'Not tested';
+  return normalizeText(value, 'Needs verification', 70);
+};
+
+const FadeIn: React.FC<{children: React.ReactNode; from: number; duration?: number; y?: number}> = ({
+  children,
+  from,
+  duration = 16,
+  y = 14
+}) => {
   const frame = useCurrentFrame();
   const opacity = interpolate(frame, [from, from + duration], [0, 1], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp'
   });
-
   const translateY = interpolate(frame, [from, from + duration], [y, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp'
   });
 
-  return (
-    <div
-      style={{
-        opacity,
-        transform: `translateY(${translateY}px)`
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div style={{opacity, transform: `translateY(${translateY}px)`}}>{children}</div>;
 };
 
-const SignalRow: React.FC<{
-  label: string;
-  signal?: TrackFlowSignalStatus;
-  delay: number;
-}> = ({label, signal, delay}) => {
+const SignalCard: React.FC<{label: string; signal?: TrackFlowSignalStatus; delay: number}> = ({
+  label,
+  signal,
+  delay
+}) => {
   const frame = useCurrentFrame();
   const progress = spring({
     frame: Math.max(0, frame - delay),
     fps: 30,
-    config: {
-      damping: 18,
-      stiffness: 120,
-      mass: 0.8
-    }
+    config: {damping: 16, stiffness: 125, mass: 0.75}
   });
-
   const detected = Boolean(signal?.detected);
+  const color = signalColor(signal);
 
   return (
     <div
       style={{
         opacity: progress,
-        transform: `translateX(${interpolate(progress, [0, 1], [28, 0])}px)`,
-        border: `1px solid ${brand.line}`,
-        background: 'rgba(8, 18, 34, 0.74)',
+        transform: `translateX(${interpolate(progress, [0, 1], [34, 0])}px)`,
+        border: `1px solid ${detected ? 'rgba(34,197,94,.38)' : 'rgba(245,158,11,.38)'}`,
+        background: detected ? 'rgba(34,197,94,.095)' : 'rgba(245,158,11,.095)',
         borderRadius: 16,
-        padding: '14px 16px',
+        padding: '12px 14px',
         display: 'grid',
-        gridTemplateColumns: '36px 1fr',
-        columnGap: 12,
+        gridTemplateColumns: '30px 1fr',
+        gap: 10,
         alignItems: 'center'
       }}
     >
       <div
         style={{
-          width: 30,
-          height: 30,
+          width: 28,
+          height: 28,
           borderRadius: 999,
-          background: detected ? 'rgba(34, 197, 94, 0.16)' : 'rgba(245, 158, 11, 0.16)',
-          border: `1px solid ${detected ? 'rgba(34, 197, 94, 0.55)' : 'rgba(245, 158, 11, 0.55)'}`,
           display: 'grid',
           placeItems: 'center',
-          color: statusColor(detected),
-          fontSize: 18,
-          fontWeight: 900
+          color,
+          border: `1px solid ${color}`,
+          fontSize: 17,
+          fontWeight: 950
         }}
       >
         {detected ? '✓' : '!'}
       </div>
-
-      <div>
-        <div
-          style={{
-            color: brand.text,
-            fontSize: 20,
-            fontWeight: 800,
-            letterSpacing: -0.2,
-            lineHeight: 1.1
-          }}
-        >
-          {label}
+      <div style={{minWidth: 0}}>
+        <div style={{fontSize: 17, fontWeight: 900, color: brand.text, lineHeight: 1.05}}>{label}</div>
+        <div style={{fontSize: 12, fontWeight: 750, color, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+          {signalStatus(signal)}
         </div>
-        <div
-          style={{
-            color: statusColor(detected),
-            fontSize: 13,
-            fontWeight: 700,
-            marginTop: 4
-          }}
-        >
-          {statusLabel(signal)}
-        </div>
-        <div
-          style={{
-            color: brand.muted,
-            fontSize: 12,
-            marginTop: 4,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis'
-          }}
-        >
-          ID: {formatIds(signal)}
+        <div style={{fontSize: 11, color: brand.muted, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+          {formatIds(signal)}
         </div>
       </div>
     </div>
   );
 };
 
-const WebsiteVisual: React.FC<{
+const MiniMetric: React.FC<{label: string; value: string; tone?: 'blue' | 'amber' | 'red' | 'green'}> = ({
+  label,
+  value,
+  tone = 'blue'
+}) => {
+  const color = tone === 'red' ? brand.red : tone === 'amber' ? brand.amber : tone === 'green' ? brand.green : brand.blue;
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${color}55`,
+        background: `${color}18`,
+        borderRadius: 18,
+        padding: '14px 16px'
+      }}
+    >
+      <div style={{fontSize: 12, color, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.2}}>
+        {label}
+      </div>
+      <div style={{fontSize: 23, color: brand.text, fontWeight: 930, lineHeight: 1.12, marginTop: 6}}>
+        {value}
+      </div>
+    </div>
+  );
+};
+
+const ScanCursor: React.FC<{active?: boolean}> = ({active = true}) => {
+  const frame = useCurrentFrame();
+  const x = interpolate(frame % 120, [0, 55, 120], [60, 62, 78], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const y = interpolate(frame % 120, [0, 55, 120], [70, 72, 62], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const opacity = active ? 1 : 0;
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${x}%`,
+        top: `${y}%`,
+        opacity,
+        transform: 'translate(-50%, -50%)',
+        zIndex: 5
+      }}
+    >
+      <div
+        style={{
+          width: 50,
+          height: 50,
+          borderRadius: 999,
+          border: '2px solid rgba(56,189,248,.74)',
+          boxShadow: '0 0 22px rgba(56,189,248,.45)',
+          background: 'rgba(56,189,248,.08)'
+        }}
+      />
+    </div>
+  );
+};
+
+const WebsiteScanVisual: React.FC<{
   src: string;
   title: string;
   subtitle: string;
-  focusLabel?: string;
-}> = ({src, title, subtitle, focusLabel = 'Review in progress'}) => {
+  mode: 'homepage' | 'action';
+  showClick?: boolean;
+}> = ({src, title, subtitle, mode, showClick = false}) => {
   const frame = useCurrentFrame();
+  const cycle = frame % 240;
+  const scrollY = mode === 'homepage'
+    ? interpolate(cycle, [0, 42, 125, 185, 240], [0, 0, -38, -38, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      })
+    : interpolate(cycle, [0, 55, 145, 240], [-8, -8, -28, -18], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      });
 
-  const scrollPhase = frame % 480;
-  const scrollY = interpolate(scrollPhase, [0, 70, 330, 480], [0, 0, -28, -28], {
+  const scanY = interpolate(frame % 110, [0, 110], [-60, 610], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp'
   });
 
-  const scanY = interpolate(frame % 150, [0, 150], [-70, 610], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp'
-  });
-
-  const pulse = interpolate(Math.sin(frame / 12), [-1, 1], [0.45, 1]);
-  const focusTop = interpolate(frame % 360, [0, 120, 240, 360], [32, 32, 58, 58], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp'
-  });
+  const focusY = mode === 'homepage'
+    ? interpolate(cycle, [0, 80, 160, 240], [34, 52, 64, 36], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      })
+    : interpolate(cycle, [0, 90, 170, 240], [52, 60, 68, 56], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      });
 
   return (
     <div
@@ -251,18 +266,18 @@ const WebsiteVisual: React.FC<{
         overflow: 'hidden',
         border: `1px solid ${brand.line}`,
         background:
-          'radial-gradient(circle at 30% 20%, rgba(56, 189, 248, 0.14), transparent 34%), rgba(8, 18, 34, 0.9)',
-        boxShadow: '0 28px 90px rgba(0, 0, 0, 0.38)'
+          'radial-gradient(circle at 30% 20%, rgba(56,189,248,.16), transparent 36%), rgba(8,18,34,.95)',
+        boxShadow: '0 28px 90px rgba(0,0,0,.38)'
       }}
     >
       <div
         style={{
           position: 'absolute',
-          inset: 16,
+          inset: 15,
           borderRadius: 22,
           overflow: 'hidden',
-          border: '1px solid rgba(226, 232, 240, 0.18)',
-          background: 'rgba(2, 6, 23, 0.72)'
+          border: '1px solid rgba(226,232,240,.20)',
+          background: 'rgba(2,6,23,.86)'
         }}
       >
         <div
@@ -272,21 +287,12 @@ const WebsiteVisual: React.FC<{
             alignItems: 'center',
             gap: 8,
             padding: '0 14px',
-            background: 'rgba(15, 23, 42, 0.92)',
-            borderBottom: '1px solid rgba(148, 163, 184, 0.18)'
+            background: 'rgba(15,23,42,.95)',
+            borderBottom: '1px solid rgba(148,163,184,.2)'
           }}
         >
           {[brand.red, brand.amber, brand.green].map((color) => (
-            <div
-              key={color}
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 999,
-                background: color,
-                opacity: 0.9
-              }}
-            />
+            <div key={color} style={{width: 10, height: 10, borderRadius: 999, background: color}} />
           ))}
           <div
             style={{
@@ -294,8 +300,8 @@ const WebsiteVisual: React.FC<{
               height: 17,
               flex: 1,
               borderRadius: 999,
-              background: 'rgba(148, 163, 184, 0.13)',
-              color: 'rgba(226, 232, 240, 0.62)',
+              background: 'rgba(148,163,184,.14)',
+              color: 'rgba(226,232,240,.62)',
               fontSize: 10,
               display: 'flex',
               alignItems: 'center',
@@ -304,21 +310,11 @@ const WebsiteVisual: React.FC<{
               letterSpacing: 0.3
             }}
           >
-            {focusLabel}
+            {mode === 'homepage' ? 'Scanning page structure' : 'Opening selected action path'}
           </div>
         </div>
 
-        <div
-          style={{
-            position: 'absolute',
-            left: 0,
-            right: 0,
-            top: 34,
-            bottom: 0,
-            overflow: 'hidden',
-            background: 'rgba(8, 18, 34, 0.9)'
-          }}
-        >
+        <div style={{position: 'absolute', left: 0, right: 0, top: 34, bottom: 0, overflow: 'hidden'}}>
           {src ? (
             <>
               <Img
@@ -328,42 +324,40 @@ const WebsiteVisual: React.FC<{
                   top: 0,
                   left: 0,
                   width: '100%',
-                  minHeight: '128%',
+                  minHeight: '150%',
                   height: 'auto',
-                  transform: `translateY(${scrollY}%) scale(1.015)`,
+                  transform: `translateY(${scrollY}%) scale(1.018)`,
                   transformOrigin: 'top center',
                   filter: 'saturate(1.08) contrast(1.04)',
                   willChange: 'transform'
                 }}
               />
-
               <div
                 style={{
                   position: 'absolute',
-                  left: 26,
-                  right: 26,
-                  top: `${focusTop}%`,
-                  height: 92,
+                  left: 24,
+                  right: 24,
+                  top: `${focusY}%`,
+                  height: mode === 'homepage' ? 78 : 96,
                   borderRadius: 18,
-                  border: `2px solid rgba(56, 189, 248, ${0.34 + pulse * 0.22})`,
-                  boxShadow: `0 0 ${18 + pulse * 16}px rgba(56, 189, 248, 0.22)`,
-                  background: 'rgba(56, 189, 248, 0.055)'
+                  border: '2px solid rgba(56,189,248,.58)',
+                  boxShadow: '0 0 25px rgba(56,189,248,.25)',
+                  background: 'rgba(56,189,248,.055)'
                 }}
               />
-
               <div
                 style={{
                   position: 'absolute',
                   left: 0,
                   right: 0,
                   top: scanY,
-                  height: 92,
-                  background:
-                    'linear-gradient(180deg, transparent, rgba(56, 189, 248, 0.30), transparent)',
+                  height: 88,
+                  background: 'linear-gradient(180deg, transparent, rgba(56,189,248,.34), transparent)',
                   mixBlendMode: 'screen',
                   filter: 'blur(1px)'
                 }}
               />
+              {showClick && <ScanCursor />}
             </>
           ) : (
             <div
@@ -373,12 +367,12 @@ const WebsiteVisual: React.FC<{
                 display: 'grid',
                 placeItems: 'center',
                 color: brand.muted,
-                fontSize: 26,
+                fontSize: 24,
                 textAlign: 'center',
-                padding: 50
+                padding: 48
               }}
             >
-              Website visual review will appear here
+              Website visual review
             </div>
           )}
         </div>
@@ -389,19 +383,12 @@ const WebsiteVisual: React.FC<{
           position: 'absolute',
           inset: 0,
           background:
-            'linear-gradient(90deg, rgba(7, 17, 31, 0.18), transparent 45%), linear-gradient(0deg, rgba(7, 17, 31, 0.86), transparent 48%)',
+            'linear-gradient(90deg, rgba(7,17,31,.14), transparent 45%), linear-gradient(0deg, rgba(7,17,31,.88), transparent 48%)',
           pointerEvents: 'none'
         }}
       />
 
-      <div
-        style={{
-          position: 'absolute',
-          left: 30,
-          right: 30,
-          bottom: 24
-        }}
-      >
+      <div style={{position: 'absolute', left: 30, right: 30, bottom: 23}}>
         <div
           style={{
             display: 'inline-flex',
@@ -409,8 +396,8 @@ const WebsiteVisual: React.FC<{
             gap: 8,
             padding: '7px 11px',
             borderRadius: 999,
-            background: 'rgba(56, 189, 248, 0.13)',
-            border: '1px solid rgba(56, 189, 248, 0.28)',
+            background: 'rgba(56,189,248,.13)',
+            border: '1px solid rgba(56,189,248,.30)',
             color: brand.blue,
             fontSize: 12,
             fontWeight: 950,
@@ -419,35 +406,13 @@ const WebsiteVisual: React.FC<{
             marginBottom: 10
           }}
         >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 999,
-              background: brand.green,
-              boxShadow: '0 0 14px rgba(34, 197, 94, 0.65)'
-            }}
-          />
-          Active scan
+          <span style={{width: 8, height: 8, borderRadius: 999, background: brand.green, boxShadow: '0 0 14px rgba(34,197,94,.65)'}} />
+          Live scan
         </div>
-        <div
-          style={{
-            color: brand.white,
-            fontSize: 28,
-            fontWeight: 900,
-            letterSpacing: -0.4
-          }}
-        >
+        <div style={{color: brand.white, fontSize: 27, fontWeight: 930, letterSpacing: -0.4}}>
           {title}
         </div>
-        <div
-          style={{
-            color: brand.muted,
-            fontSize: 15,
-            fontWeight: 600,
-            marginTop: 8
-          }}
-        >
+        <div style={{color: brand.muted, fontSize: 15, fontWeight: 650, marginTop: 7}}>
           {subtitle}
         </div>
       </div>
@@ -455,203 +420,52 @@ const WebsiteVisual: React.FC<{
   );
 };
 
-const Header: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-  label: string;
-}> = ({input, label}) => {
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        top: 28,
-        left: 38,
-        right: 38,
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        zIndex: 10
-      }}
-    >
-      <div>
-        <div
-          style={{
-            color: brand.blue,
-            fontSize: 15,
-            fontWeight: 900,
-            textTransform: 'uppercase',
-            letterSpacing: 2.6
-          }}
-        >
-          TrackFlow Pro
-        </div>
-        <div
-          style={{
-            color: brand.text,
-            fontSize: 28,
-            fontWeight: 950,
-            letterSpacing: -0.6,
-            marginTop: 4
-          }}
-        >
-          {label}
-        </div>
+const Header: React.FC<{input: NormalizedTrackFlowVideoInput; label: string}> = ({input, label}) => (
+  <div style={{position: 'absolute', top: 24, left: 34, right: 34, display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 20}}>
+    <div>
+      <div style={{color: brand.blue, fontSize: 14, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 2.4}}>
+        TrackFlow Pro
       </div>
-
-      <div
-        style={{
-          border: `1px solid ${brand.line}`,
-          background: 'rgba(8, 18, 34, 0.72)',
-          color: brand.muted,
-          padding: '10px 14px',
-          borderRadius: 999,
-          fontSize: 14,
-          fontWeight: 700,
-          maxWidth: 330,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis'
-        }}
-      >
-        {input.domain}
+      <div style={{color: brand.text, fontSize: 27, fontWeight: 950, letterSpacing: -0.6, marginTop: 3}}>
+        {label}
       </div>
     </div>
-  );
-};
+    <div style={{border: `1px solid ${brand.line}`, background: 'rgba(8,18,34,.72)', color: brand.muted, padding: '9px 14px', borderRadius: 999, fontSize: 14, fontWeight: 750, maxWidth: 330, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+      {input.domain}
+    </div>
+  </div>
+);
 
-const ScanBeam: React.FC = () => {
+const IntroScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
   const frame = useCurrentFrame();
-  const y = interpolate(frame % 150, [0, 150], [-60, 620], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp'
-  });
-
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        top: y,
-        height: 82,
-        background:
-          'linear-gradient(180deg, transparent, rgba(56, 189, 248, 0.25), transparent)',
-        filter: 'blur(1px)',
-        mixBlendMode: 'screen'
-      }}
-    />
-  );
-};
-
-const IntroScene: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-  setupFirst: boolean;
-}> = ({input, setupFirst}) => {
-  const frame = useCurrentFrame();
-  const scale = spring({
-    frame,
-    fps: 30,
-    config: {damping: 18, stiffness: 90, mass: 0.9}
-  });
+  const entrance = spring({frame, fps: 30, config: {damping: 18, stiffness: 90, mass: 0.9}});
 
   return (
     <AbsoluteFill
       style={{
         background:
-          'radial-gradient(circle at 18% 16%, rgba(56, 189, 248, 0.22), transparent 35%), radial-gradient(circle at 80% 20%, rgba(34, 197, 94, 0.16), transparent 34%), #07111f',
+          'radial-gradient(circle at 18% 16%, rgba(56,189,248,.22), transparent 35%), radial-gradient(circle at 82% 18%, rgba(34,197,94,.14), transparent 34%), #06111f',
         color: brand.text,
-        padding: 70,
+        padding: 64,
         justifyContent: 'center'
       }}
     >
-      <div
-        style={{
-          transform: `scale(${interpolate(scale, [0, 1], [0.96, 1])})`,
-          maxWidth: 940
-        }}
-      >
+      <div style={{transform: `scale(${interpolate(entrance, [0, 1], [0.965, 1])})`, maxWidth: 960}}>
         <FadeIn from={0}>
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '10px 16px',
-              borderRadius: 999,
-              background: 'rgba(56, 189, 248, 0.12)',
-              border: '1px solid rgba(56, 189, 248, 0.35)',
-              color: brand.blue,
-              fontWeight: 900,
-              fontSize: 16,
-              letterSpacing: 1.5,
-              textTransform: 'uppercase'
-            }}
-          >
-            Private Website Tracking Review
+          <div style={{display: 'inline-flex', padding: '9px 15px', borderRadius: 999, background: 'rgba(56,189,248,.12)', border: '1px solid rgba(56,189,248,.35)', color: brand.blue, fontWeight: 950, fontSize: 15, letterSpacing: 1.5, textTransform: 'uppercase'}}>
+            {setupFirst ? 'Tracking setup readiness' : 'Tracking & action verification'}
           </div>
         </FadeIn>
-
-        <FadeIn from={12}>
-          <div
-            style={{
-              fontSize: 72,
-              lineHeight: 0.98,
-              fontWeight: 950,
-              letterSpacing: -2.8,
-              marginTop: 28
-            }}
-          >
+        <FadeIn from={10}>
+          <div style={{fontSize: 66, lineHeight: 0.98, fontWeight: 950, letterSpacing: -2.5, marginTop: 24}}>
             {input.businessName}
           </div>
         </FadeIn>
-
-        <FadeIn from={26}>
-          <div
-            style={{
-              fontSize: 26,
-              lineHeight: 1.35,
-              color: brand.muted,
-              marginTop: 24,
-              maxWidth: 780,
-              fontWeight: 600
-            }}
-          >
+        <FadeIn from={22}>
+          <div style={{fontSize: 23, lineHeight: 1.35, color: brand.muted, marginTop: 22, maxWidth: 820, fontWeight: 650}}>
             {setupFirst
-              ? 'This review checks whether the website has a clear tracking foundation before event-level testing.'
-              : 'This review checks browser-visible tracking signals and the selected business action result.'}
-          </div>
-        </FadeIn>
-
-        <FadeIn from={42}>
-          <div
-            style={{
-              marginTop: 38,
-              display: 'flex',
-              gap: 16,
-              color: brand.text,
-              fontSize: 18,
-              fontWeight: 800
-            }}
-          >
-            <div
-              style={{
-                background: brand.card,
-                border: `1px solid ${brand.line}`,
-                borderRadius: 18,
-                padding: '16px 20px'
-              }}
-            >
-              Website: {input.domain}
-            </div>
-            <div
-              style={{
-                background: brand.card,
-                border: `1px solid ${brand.line}`,
-                borderRadius: 18,
-                padding: '16px 20px'
-              }}
-            >
-              Review mode: {setupFirst ? 'Setup readiness' : 'Event verification'}
-            </div>
+              ? 'Quick browser-visible scan of the tracking foundation before event-level testing.'
+              : `Quick scan of ${input.manualEvidence.actionLabel} and the expected event signal.`}
           </div>
         </FadeIn>
       </div>
@@ -659,122 +473,40 @@ const IntroScene: React.FC<{
   );
 };
 
-const ScanScene: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-  setupFirst: boolean;
-}> = ({input, setupFirst}) => {
-  const primaryVisual = getPrimaryVisual(input);
+const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
+  const homepage = getVisual(input, ['website_overview', 'website_homepage', 'homepage'], 0);
+  const src = getVisualSrc(homepage);
 
   return (
-    <AbsoluteFill
-      style={{
-        background:
-          'radial-gradient(circle at 20% 10%, rgba(56, 189, 248, 0.18), transparent 32%), #07111f',
-        color: brand.text,
-        padding: '96px 38px 34px'
-      }}
-    >
-      <Header
-        input={input}
-        label={setupFirst ? 'Tracking Foundation Scan' : 'Tracking Signal Scan'}
-      />
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.12fr 0.88fr',
-          gap: 28,
-          height: '100%',
-          marginTop: 8
-        }}
-      >
-        <WebsiteVisual
-          src={primaryVisual}
+    <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
+      <Header input={input} label={setupFirst ? 'Foundation Scan' : 'Signal Scan'} />
+      <div style={{display: 'grid', gridTemplateColumns: '1.08fr .92fr', gap: 24, height: '100%'}}>
+        <WebsiteScanVisual
+          src={src}
           title={input.businessName}
-          subtitle="Website visual review in progress"
-          focusLabel="Scanning page structure"
+          subtitle="Website structure and tag signals"
+          mode="homepage"
         />
 
-        <div
-          style={{
-            position: 'relative',
-            background: brand.card,
-            border: `1px solid ${brand.line}`,
-            borderRadius: 28,
-            padding: 24,
-            overflow: 'hidden',
-            boxShadow: '0 28px 90px rgba(0, 0, 0, 0.32)'
-          }}
-        >
-          <ScanBeam />
-
-          <div
-            style={{
-              position: 'relative',
-              zIndex: 2
-            }}
-          >
-            <div
-              style={{
-                fontSize: 18,
-                fontWeight: 900,
-                color: brand.blue,
-                textTransform: 'uppercase',
-                letterSpacing: 1.8,
-                marginBottom: 18
-              }}
-            >
-              Browser-visible signals
+        <div style={{position: 'relative', background: brand.panel, border: `1px solid ${brand.line}`, borderRadius: 28, padding: 22, overflow: 'hidden', boxShadow: '0 28px 90px rgba(0,0,0,.32)'}}>
+          <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(circle at 20% 0%, rgba(56,189,248,.15), transparent 40%)'}} />
+          <div style={{position: 'relative', zIndex: 2}}>
+            <div style={{fontSize: 15, color: brand.blue, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.8, marginBottom: 14}}>
+              Detected signals
             </div>
-
-            <div
-              style={{
-                display: 'grid',
-                gap: 13
-              }}
-            >
-              <SignalRow label="GA4" signal={input.trackingSignals.ga4} delay={14} />
-              <SignalRow label="Google Tag Manager" signal={input.trackingSignals.gtm} delay={28} />
-              <SignalRow label="Google Ads tag" signal={input.trackingSignals.googleAds} delay={42} />
-              <SignalRow label="Meta Pixel" signal={input.trackingSignals.metaPixel} delay={56} />
+            <div style={{display: 'grid', gap: 10}}>
+              <SignalCard label="GA4" signal={input.trackingSignals.ga4} delay={10} />
+              <SignalCard label="GTM" signal={input.trackingSignals.gtm} delay={24} />
+              <SignalCard label="Google Ads" signal={input.trackingSignals.googleAds} delay={38} />
+              <SignalCard label="Meta Pixel" signal={input.trackingSignals.metaPixel} delay={52} />
             </div>
-
-            <FadeIn from={86}>
-              <div
-                style={{
-                  marginTop: 22,
-                  borderRadius: 18,
-                  border: `1px solid ${setupFirst ? 'rgba(245, 158, 11, 0.45)' : 'rgba(56, 189, 248, 0.42)'}`,
-                  background: setupFirst
-                    ? 'rgba(245, 158, 11, 0.10)'
-                    : 'rgba(56, 189, 248, 0.10)',
-                  padding: '16px 18px'
-                }}
-              >
-                <div
-                  style={{
-                    color: setupFirst ? brand.amber : brand.blue,
-                    fontSize: 15,
-                    fontWeight: 900,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1.3
-                  }}
-                >
-                  {setupFirst ? 'Setup-first finding' : 'Selected action review'}
-                </div>
-                <div
-                  style={{
-                    color: brand.text,
-                    fontSize: 22,
-                    lineHeight: 1.22,
-                    fontWeight: 850,
-                    marginTop: 7
-                  }}
-                >
-                  {setupFirst
-                    ? 'GA4/GTM tracking foundation was not clearly detected.'
-                    : `${input.manualEvidence.actionLabel} was reviewed.`}
-                </div>
+            <FadeIn from={74}>
+              <div style={{marginTop: 16}}>
+                <MiniMetric
+                  label={setupFirst ? 'Current finding' : 'Action focus'}
+                  value={setupFirst ? 'GA4/GTM foundation needs verification' : input.manualEvidence.actionLabel}
+                  tone={setupFirst ? 'amber' : 'blue'}
+                />
               </div>
             </FadeIn>
           </div>
@@ -784,453 +516,115 @@ const ScanScene: React.FC<{
   );
 };
 
-const EventScene: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-}> = ({input}) => {
-  const secondVisual = getSecondVisual(input);
+const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
+  const actionVisual = getVisual(input, ['primary_action', 'secondary_action', 'action_result', 'tag_assistant', 'ga4_debugview_or_gtm_preview'], 1);
+  const src = getVisualSrc(actionVisual);
 
   return (
-    <AbsoluteFill
-      style={{
-        background:
-          'radial-gradient(circle at 74% 20%, rgba(251, 113, 133, 0.14), transparent 32%), #07111f',
-        color: brand.text,
-        padding: '96px 38px 34px'
-      }}
-    >
-      <Header input={input} label="Expected vs Observed Result" />
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.04fr 0.96fr',
-          gap: 28,
-          height: '100%',
-          marginTop: 8
-        }}
-      >
-        <WebsiteVisual
-          src={secondVisual}
-          title={input.manualEvidence.actionLabel || 'Selected business action'}
-          subtitle={`Tool used: ${input.manualEvidence.toolUsed || 'Browser-visible review'}`}
-          focusLabel="Checking selected action"
+    <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
+      <Header input={input} label={setupFirst ? 'Setup-first Finding' : 'Expected vs Observed'} />
+      <div style={{display: 'grid', gridTemplateColumns: '1.08fr .92fr', gap: 24, height: '100%'}}>
+        <WebsiteScanVisual
+          src={src}
+          title={setupFirst ? 'Future event test path' : input.manualEvidence.actionLabel}
+          subtitle={setupFirst ? 'Event testing comes after setup is confirmed' : `Tool: ${input.manualEvidence.toolUsed || 'Tag Assistant'}`}
+          mode="action"
+          showClick={!setupFirst}
         />
 
-        <div
-          style={{
-            background: brand.card,
-            border: `1px solid ${brand.line}`,
-            borderRadius: 28,
-            padding: 30,
-            boxShadow: '0 28px 90px rgba(0, 0, 0, 0.32)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}
-        >
-          <FadeIn from={0}>
-            <div
-              style={{
-                color: brand.blue,
-                fontSize: 17,
-                fontWeight: 900,
-                textTransform: 'uppercase',
-                letterSpacing: 1.7
-              }}
-            >
-              Action reviewed
-            </div>
-            <div
-              style={{
-                color: brand.text,
-                fontSize: 42,
-                lineHeight: 1.04,
-                fontWeight: 950,
-                letterSpacing: -1.3,
-                marginTop: 12
-              }}
-            >
-              {input.manualEvidence.actionLabel}
-            </div>
-          </FadeIn>
-
-          <FadeIn from={28}>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr',
-                gap: 14,
-                marginTop: 34
-              }}
-            >
-              <div
-                style={{
-                  borderRadius: 20,
-                  border: '1px solid rgba(56, 189, 248, 0.35)',
-                  background: 'rgba(56, 189, 248, 0.10)',
-                  padding: '18px 20px'
-                }}
-              >
-                <div
-                  style={{
-                    color: brand.blue,
-                    fontSize: 15,
-                    fontWeight: 900,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1.2
-                  }}
-                >
-                  Expected event
+        <div style={{background: brand.panel, border: `1px solid ${brand.line}`, borderRadius: 28, padding: 28, boxShadow: '0 28px 90px rgba(0,0,0,.32)', display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
+          {setupFirst ? (
+            <>
+              <FadeIn from={0}>
+                <div style={{color: brand.amber, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.6}}>Main issue</div>
+                <div style={{color: brand.text, fontSize: 42, lineHeight: 1.04, fontWeight: 950, letterSpacing: -1.5, marginTop: 10}}>
+                  GA4/GTM tracking foundation was not clearly detected.
                 </div>
-                <div
-                  style={{
-                    color: brand.text,
-                    fontSize: 28,
-                    fontWeight: 900,
-                    marginTop: 8
-                  }}
-                >
-                  {input.manualEvidence.expectedEvent || 'Expected event not provided'}
+              </FadeIn>
+              <div style={{display: 'grid', gap: 12, marginTop: 26}}>
+                <FadeIn from={24}><MiniMetric label="Step 1" value="Confirm GTM / Google tag path" tone="amber" /></FadeIn>
+                <FadeIn from={44}><MiniMetric label="Step 2" value="Verify GA4 page_view activity" tone="blue" /></FadeIn>
+                <FadeIn from={64}><MiniMetric label="Future test target" value={input.manualEvidence.futureTestTarget || input.manualEvidence.actionLabel} tone="green" /></FadeIn>
+              </div>
+            </>
+          ) : (
+            <>
+              <FadeIn from={0}>
+                <div style={{color: brand.blue, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.6}}>Selected action</div>
+                <div style={{color: brand.text, fontSize: 38, lineHeight: 1.04, fontWeight: 950, letterSpacing: -1.3, marginTop: 10}}>
+                  {input.manualEvidence.actionLabel}
                 </div>
+              </FadeIn>
+              <div style={{display: 'grid', gap: 12, marginTop: 24}}>
+                <FadeIn from={24}><MiniMetric label="Expected event" value={input.manualEvidence.expectedEvent || 'Expected event not provided'} tone="blue" /></FadeIn>
+                <FadeIn from={44}><MiniMetric label="Observed result" value={input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved)} tone="amber" /></FadeIn>
+                <FadeIn from={64}><MiniMetric label="GTM / Ads status" value={`GTM: ${formatStatus(input.manualEvidence.gtmTriggerObserved)} · Ads: ${formatStatus(input.manualEvidence.googleAdsConversionObserved)}`} tone="red" /></FadeIn>
               </div>
-
-              <div
-                style={{
-                  borderRadius: 20,
-                  border: '1px solid rgba(245, 158, 11, 0.44)',
-                  background: 'rgba(245, 158, 11, 0.11)',
-                  padding: '18px 20px'
-                }}
-              >
-                <div
-                  style={{
-                    color: brand.amber,
-                    fontSize: 15,
-                    fontWeight: 900,
-                    textTransform: 'uppercase',
-                    letterSpacing: 1.2
-                  }}
-                >
-                  Observed result
-                </div>
-                <div
-                  style={{
-                    color: brand.text,
-                    fontSize: 28,
-                    fontWeight: 900,
-                    marginTop: 8
-                  }}
-                >
-                  {input.manualEvidence.observedEvent || 'Not clearly observed'}
-                </div>
-              </div>
-            </div>
-          </FadeIn>
-
-          <FadeIn from={78}>
-            <div
-              style={{
-                marginTop: 26,
-                borderRadius: 22,
-                background: 'rgba(251, 113, 133, 0.12)',
-                border: '1px solid rgba(251, 113, 133, 0.40)',
-                padding: '18px 20px'
-              }}
-            >
-              <div
-                style={{
-                  color: brand.red,
-                  fontSize: 15,
-                  fontWeight: 950,
-                  textTransform: 'uppercase',
-                  letterSpacing: 1.4
-                }}
-              >
-                Warning
-              </div>
-              <div
-                style={{
-                  color: brand.text,
-                  fontSize: 25,
-                  lineHeight: 1.22,
-                  fontWeight: 850,
-                  marginTop: 8
-                }}
-              >
-                The expected event was not clearly observed during the browser-visible review.
-              </div>
-            </div>
-          </FadeIn>
+            </>
+          )}
         </div>
       </div>
     </AbsoluteFill>
   );
 };
 
-const SetupFirstScene: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-}> = ({input}) => {
-  const secondVisual = getSecondVisual(input);
-
-  return (
-    <AbsoluteFill
-      style={{
-        background:
-          'radial-gradient(circle at 74% 20%, rgba(245, 158, 11, 0.16), transparent 30%), #07111f',
-        color: brand.text,
-        padding: '96px 38px 34px'
-      }}
-    >
-      <Header input={input} label="Setup Readiness Finding" />
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.04fr 0.96fr',
-          gap: 28,
-          height: '100%',
-          marginTop: 8
-        }}
-      >
-        <WebsiteVisual
-          src={secondVisual}
-          title="Tracking foundation review"
-          subtitle="Event-level testing should come after setup is confirmed"
-          focusLabel="Checking tracking readiness"
-        />
-
-        <div
-          style={{
-            background: brand.card,
-            border: `1px solid ${brand.line}`,
-            borderRadius: 28,
-            padding: 34,
-            boxShadow: '0 28px 90px rgba(0, 0, 0, 0.32)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center'
-          }}
-        >
-          <FadeIn from={0}>
-            <div
-              style={{
-                color: brand.amber,
-                fontSize: 17,
-                fontWeight: 950,
-                textTransform: 'uppercase',
-                letterSpacing: 1.7
-              }}
-            >
-              Main finding
-            </div>
-            <div
-              style={{
-                color: brand.text,
-                fontSize: 47,
-                lineHeight: 1.02,
-                fontWeight: 950,
-                letterSpacing: -1.7,
-                marginTop: 14
-              }}
-            >
-              GA4/GTM tracking foundation was not clearly detected.
-            </div>
-          </FadeIn>
-
-          <FadeIn from={44}>
-            <div
-              style={{
-                marginTop: 34,
-                display: 'grid',
-                gap: 14
-              }}
-            >
-              {[
-                'Set up or verify the Google tag / GTM foundation first.',
-                'Install and confirm GA4 page activity.',
-                'Then configure and test the selected business action.'
-              ].map((item, index) => (
-                <div
-                  key={item}
-                  style={{
-                    display: 'flex',
-                    gap: 12,
-                    alignItems: 'flex-start',
-                    background: brand.cardSoft,
-                    border: `1px solid ${brand.line}`,
-                    borderRadius: 18,
-                    padding: '15px 17px',
-                    fontSize: 22,
-                    lineHeight: 1.22,
-                    fontWeight: 800
-                  }}
-                >
-                  <span
-                    style={{
-                      color: index === 0 ? brand.amber : brand.green,
-                      fontWeight: 950
-                    }}
-                  >
-                    {index + 1}.
-                  </span>
-                  <span>{item}</span>
-                </div>
-              ))}
-            </div>
-          </FadeIn>
-
-          <FadeIn from={96}>
-            <div
-              style={{
-                marginTop: 28,
-                color: brand.muted,
-                fontSize: 18,
-                lineHeight: 1.35,
-                fontWeight: 650
-              }}
-            >
-              Future test target: {input.manualEvidence.actionLabel || 'selected business action'}
-            </div>
-          </FadeIn>
-        </div>
+const FinalScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => (
+  <AbsoluteFill
+    style={{
+      background:
+        'radial-gradient(circle at 18% 18%, rgba(56,189,248,.18), transparent 34%), radial-gradient(circle at 82% 18%, rgba(34,197,94,.14), transparent 36%), #06111f',
+      color: brand.text,
+      padding: 68,
+      justifyContent: 'center'
+    }}
+  >
+    <FadeIn from={0}>
+      <div style={{color: brand.blue, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 2}}>
+        Recommended next step
       </div>
-    </AbsoluteFill>
-  );
-};
-
-const RecommendationScene: React.FC<{
-  input: NormalizedTrackFlowVideoInput;
-  setupFirst: boolean;
-}> = ({input, setupFirst}) => {
-  return (
-    <AbsoluteFill
-      style={{
-        background:
-          'radial-gradient(circle at 20% 18%, rgba(34, 197, 94, 0.17), transparent 32%), radial-gradient(circle at 82% 18%, rgba(56, 189, 248, 0.16), transparent 35%), #07111f',
-        color: brand.text,
-        padding: 76,
-        justifyContent: 'center'
-      }}
-    >
-      <FadeIn from={0}>
-        <div
-          style={{
-            color: brand.blue,
-            fontSize: 17,
-            fontWeight: 950,
-            textTransform: 'uppercase',
-            letterSpacing: 2.2
-          }}
-        >
-          Recommended next step
-        </div>
-      </FadeIn>
-
-      <FadeIn from={18}>
-        <div
-          style={{
-            fontSize: 62,
-            lineHeight: 1.02,
-            fontWeight: 950,
-            letterSpacing: -2.2,
-            marginTop: 16,
-            maxWidth: 1060
-          }}
-        >
-          {setupFirst
-            ? 'Verify the tracking foundation before judging individual events.'
-            : 'Confirm the expected event inside GA4, GTM, Google Ads, and backend records.'}
-        </div>
-      </FadeIn>
-
-      <FadeIn from={52}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 18,
-            marginTop: 38
-          }}
-        >
-          {(setupFirst
-            ? ['Google tag / GTM setup', 'GA4 page activity', 'Controlled event test after setup']
-            : ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM records']
-          ).map((item) => (
-            <div
-              key={item}
-              style={{
-                background: brand.card,
-                border: `1px solid ${brand.line}`,
-                borderRadius: 22,
-                padding: 22,
-                minHeight: 110
-              }}
-            >
-              <div
-                style={{
-                  width: 34,
-                  height: 34,
-                  borderRadius: 999,
-                  background: 'rgba(34, 197, 94, 0.15)',
-                  border: '1px solid rgba(34, 197, 94, 0.48)',
-                  color: brand.green,
-                  display: 'grid',
-                  placeItems: 'center',
-                  fontWeight: 950,
-                  marginBottom: 14
-                }}
-              >
-                ✓
-              </div>
-              <div
-                style={{
-                  fontSize: 22,
-                  lineHeight: 1.18,
-                  fontWeight: 850
-                }}
-              >
-                {item}
-              </div>
-            </div>
-          ))}
-        </div>
-      </FadeIn>
-
-      <FadeIn from={96}>
-        <div
-          style={{
-            marginTop: 36,
-            color: brand.muted,
-            fontSize: 19,
-            lineHeight: 1.35,
-            maxWidth: 980,
-            fontWeight: 620
-          }}
-        >
-          {input.clientSafeDisclaimer}
-        </div>
-      </FadeIn>
-    </AbsoluteFill>
-  );
-};
+    </FadeIn>
+    <FadeIn from={14}>
+      <div style={{fontSize: 52, lineHeight: 1.03, fontWeight: 950, letterSpacing: -1.8, marginTop: 16, maxWidth: 1040}}>
+        {setupFirst
+          ? 'Verify the tracking foundation first, then test the selected business action.'
+          : `Confirm ${input.manualEvidence.expectedEvent || 'the expected event'} inside GA4, GTM, Google Ads, and backend records.`}
+      </div>
+    </FadeIn>
+    <FadeIn from={42}>
+      <div style={{marginTop: 30, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16}}>
+        {(setupFirst
+          ? ['GTM / Google tag', 'GA4 page activity', 'Controlled event test']
+          : ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM']
+        ).map((item) => (
+          <div key={item} style={{background: brand.panelSoft, border: `1px solid ${brand.line}`, borderRadius: 20, padding: 20, minHeight: 94}}>
+            <div style={{width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', border: '1px solid rgba(34,197,94,.48)', color: brand.green, fontWeight: 950}}>✓</div>
+            <div style={{fontSize: 21, lineHeight: 1.18, fontWeight: 850, marginTop: 12}}>{item}</div>
+          </div>
+        ))}
+      </div>
+    </FadeIn>
+    <FadeIn from={64}>
+      <div style={{marginTop: 28, color: brand.muted, fontSize: 17, maxWidth: 960, lineHeight: 1.35}}>
+        {input.clientSafeDisclaimer}
+      </div>
+    </FadeIn>
+  </AbsoluteFill>
+);
 
 export const TrackFlowEvidenceVideo: React.FC<TrackFlowVideoInput> = (props) => {
   const input = normalizeVideoInput(props);
   const frame = useCurrentFrame();
   const {durationInFrames} = useVideoConfig();
-
   const setupFirst = isSetupFirstMode(input.reportMode);
 
   const scene =
-    frame < 210
+    frame < 80
       ? 'intro'
-      : frame < 690
+      : frame < 355
         ? 'scan'
-        : frame < 1170
-          ? setupFirst
-            ? 'setup'
-            : 'event'
-          : 'recommendation';
+        : frame < 610
+          ? 'event'
+          : 'final';
 
   const progress = interpolate(frame, [0, durationInFrames - 1], [0, 100], {
     extrapolateLeft: 'clamp',
@@ -1247,32 +641,11 @@ export const TrackFlowEvidenceVideo: React.FC<TrackFlowVideoInput> = (props) => 
     >
       {scene === 'intro' && <IntroScene input={input} setupFirst={setupFirst} />}
       {scene === 'scan' && <ScanScene input={input} setupFirst={setupFirst} />}
-      {scene === 'setup' && <SetupFirstScene input={input} />}
-      {scene === 'event' && <EventScene input={input} />}
-      {scene === 'recommendation' && (
-        <RecommendationScene input={input} setupFirst={setupFirst} />
-      )}
+      {scene === 'event' && <EventScene input={input} setupFirst={setupFirst} />}
+      {scene === 'final' && <FinalScene input={input} setupFirst={setupFirst} />}
 
-      <div
-        style={{
-          position: 'absolute',
-          left: 38,
-          right: 38,
-          bottom: 18,
-          height: 4,
-          borderRadius: 999,
-          background: 'rgba(148, 163, 184, 0.18)',
-          overflow: 'hidden'
-        }}
-      >
-        <div
-          style={{
-            width: `${progress}%`,
-            height: '100%',
-            background: `linear-gradient(90deg, ${brand.blue}, ${brand.green})`,
-            borderRadius: 999
-          }}
-        />
+      <div style={{position: 'absolute', left: 36, right: 36, bottom: 17, height: 4, borderRadius: 999, background: 'rgba(148,163,184,.18)', overflow: 'hidden'}}>
+        <div style={{width: `${progress}%`, height: '100%', background: `linear-gradient(90deg, ${brand.blue}, ${brand.green})`, borderRadius: 999}} />
       </div>
     </AbsoluteFill>
   );
