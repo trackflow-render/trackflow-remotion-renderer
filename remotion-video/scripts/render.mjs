@@ -26,6 +26,7 @@ const getArg = (name, fallback = '') => {
 };
 
 const inputPath = resolve(getArg('input', ''));
+const explicitInputRoot = getArg('input-root', '');
 const outputPath = resolve(getArg('output', 'out/evidence-video.mp4'));
 
 if (!inputPath || !existsSync(inputPath)) {
@@ -47,10 +48,32 @@ if (!parsed || typeof parsed !== 'object') {
   process.exit(1);
 }
 
-const schemaVersion = String(parsed.schemaVersion || '').trim();
-if (schemaVersion && schemaVersion !== 'trackflow-video-input-v1') {
-  console.error('[TrackFlow Render] Unsupported input schema.');
-  process.exit(1);
+const acceptedSchemas = new Set([
+  '',
+  'trackflow-video-input-v1',
+  'trackflow-remotion-input-v1',
+  'trackflow-remotion-video-input-v1',
+  'trackflow-evidence-video-input-v1',
+  'trackflow-video-package-v1'
+]);
+
+const rawSchemaVersion = String(parsed.schemaVersion || parsed.schema_version || '').trim();
+
+if (!acceptedSchemas.has(rawSchemaVersion)) {
+  const looksLikeTrackFlowVideoSchema =
+    rawSchemaVersion.startsWith('trackflow-') &&
+    (
+      rawSchemaVersion.includes('video') ||
+      rawSchemaVersion.includes('remotion') ||
+      rawSchemaVersion.includes('evidence')
+    );
+
+  if (!looksLikeTrackFlowVideoSchema) {
+    console.error('[TrackFlow Render] Unsupported input schema.');
+    process.exit(1);
+  }
+
+  console.log('[TrackFlow Render] Compatible TrackFlow schema detected.');
 }
 
 const size = statSync(inputPath).size;
@@ -60,7 +83,7 @@ if (size > 5 * 1024 * 1024) {
 }
 
 const cwd = resolve(process.cwd());
-const inputDir = dirname(inputPath);
+const inputDir = explicitInputRoot ? resolve(explicitInputRoot) : dirname(inputPath);
 
 const renderWorkDir = resolve(cwd, '.trackflow-render-work');
 const publicBaseRel = 'trackflow-video-input';
@@ -137,7 +160,7 @@ const sanitizeVisualArray = (visuals) => {
   return visuals.slice(0, 8).map((visual, index) => {
     if (!visual || typeof visual !== 'object') return visual;
 
-    const raw = visual.src || visual.path || '';
+    const raw = visual.src || visual.path || visual.url || '';
     const publicSrc = preparePublicAsset(raw, index);
 
     return {
@@ -155,7 +178,8 @@ mkdirSync(publicAssetsDir, {recursive: true});
 mkdirSync(dirname(outputPath), {recursive: true});
 
 const sanitized = {
-  ...parsed
+  ...parsed,
+  schemaVersion: 'trackflow-video-input-v1'
 };
 
 if (Array.isArray(parsed.visuals)) {
