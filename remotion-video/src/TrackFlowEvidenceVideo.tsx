@@ -97,6 +97,25 @@ const formatStatus = (value: unknown, positiveText = 'Observed'): string => {
   return normalizeText(value, 'Needs verification', 70);
 };
 
+const normalizeEventComparisonText = (value: unknown): string =>
+  normalizeText(value, '', 140)
+    .toLowerCase()
+    .replace(/[\s_-]+/g, ' ')
+    .replace(/[^a-z0-9 ]+/g, '')
+    .trim();
+
+const isExpectedEventClearlyObserved = (input: NormalizedTrackFlowVideoInput): boolean => {
+  const expected = normalizeEventComparisonText(input.manualEvidence.expectedEvent);
+  const observed = normalizeEventComparisonText(input.manualEvidence.observedEvent);
+  const ga4Status = normalizeEventComparisonText(input.manualEvidence.ga4EventObserved);
+
+  if (!expected) return false;
+  if (observed && observed.includes(expected)) return true;
+  if (ga4Status && ['observed', 'event observed', 'ok', 'yes', 'true'].includes(ga4Status)) return true;
+  return false;
+};
+
+
 const FadeIn: React.FC<{children: React.ReactNode; from: number; duration?: number; y?: number}> = ({
   children,
   from,
@@ -130,7 +149,7 @@ const SignalCard: React.FC<{
     fps: 30,
     config: {damping: 13, stiffness: 170, mass: 0.62}
   });
-  const detected = Boolean(signal?.detected);
+  const detected = hasSignalEvidence(signal);
   const color = signalColor(signal);
   const scanning = localFrame >= delay && localFrame < delay + 18;
   const iconReady = localFrame >= delay + 14;
@@ -267,6 +286,118 @@ const MiniMetric: React.FC<{label: string; value: string; tone?: 'blue' | 'amber
   );
 };
 
+
+const EventValueCard: React.FC<{
+  label: string;
+  value: string;
+  delay: number;
+  sceneStart: number;
+  tone?: 'blue' | 'amber' | 'red' | 'green';
+  scanLabel?: string;
+  confirmed?: boolean;
+}> = ({label, value, delay, sceneStart, tone = 'blue', scanLabel = 'Detecting', confirmed = true}) => {
+  const frame = useCurrentFrame();
+  const localFrame = frame - sceneStart;
+  const cardFrame = Math.max(0, localFrame - delay);
+  const progress = spring({
+    frame: cardFrame,
+    fps: 30,
+    config: {damping: 14, stiffness: 155, mass: 0.72}
+  });
+  const color = tone === 'red' ? brand.red : tone === 'amber' ? brand.amber : tone === 'green' ? brand.green : brand.blue;
+  const scanning = localFrame >= delay && localFrame < delay + 22;
+  const revealed = localFrame >= delay + 18;
+  const pulse = interpolate(cardFrame % 54, [0, 8, 20, 54], [0.2, 1, 0.35, 0.2], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const sweepX = interpolate(cardFrame % 66, [0, 66], [-90, 430], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotOne = interpolate(cardFrame % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotTwo = interpolate((cardFrame + 12) % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotThree = interpolate((cardFrame + 24) % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+
+  return (
+    <div
+      style={{
+        position: 'relative',
+        opacity: progress,
+        transform: `translateY(${interpolate(progress, [0, 1], [24, 0])}px) scale(${interpolate(progress, [0, 0.7, 1], [0.96, 1.025, 1])})`,
+        border: `1px solid ${color}66`,
+        background: `linear-gradient(135deg, ${color}18, rgba(15,23,42,.44))`,
+        borderRadius: 20,
+        padding: '14px 16px',
+        minHeight: 92,
+        overflow: 'hidden',
+        boxShadow: `0 0 ${10 + pulse * 24}px ${color}22`,
+        willChange: 'transform, opacity'
+      }}
+    >
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: sweepX,
+          width: 88,
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.20), transparent)',
+          transform: 'skewX(-18deg)',
+          opacity: localFrame >= delay ? 0.75 : 0,
+          pointerEvents: 'none'
+        }}
+      />
+      <div style={{position: 'relative', zIndex: 2, display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center'}}>
+        <div style={{minWidth: 0, flex: 1}}>
+          <div style={{fontSize: 12, color, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.25}}>{label}</div>
+          <div style={{fontSize: 24, color: brand.text, fontWeight: 950, lineHeight: 1.06, marginTop: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
+            {scanning ? (
+              <span>
+                {scanLabel}
+                <span style={{opacity: dotOne}}>.</span>
+                <span style={{opacity: dotTwo}}>.</span>
+                <span style={{opacity: dotThree}}>.</span>
+              </span>
+            ) : (
+              value
+            )}
+          </div>
+          <div style={{fontSize: 11, color: brand.muted, fontWeight: 750, marginTop: 7}}>
+            {revealed ? (confirmed ? 'Detected from operator review context' : 'Comparison needs final account-side confirmation') : 'Reading manual evidence fields'}
+          </div>
+        </div>
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 999,
+            display: 'grid',
+            placeItems: 'center',
+            border: `1px solid ${color}`,
+            color,
+            fontSize: 18,
+            fontWeight: 950,
+            background: 'rgba(2,6,23,.38)',
+            boxShadow: `0 0 ${12 + pulse * 18}px ${color}44`
+          }}
+        >
+          {revealed ? (confirmed ? '✓' : '!') : '•'}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ScanCursor: React.FC<{active?: boolean}> = ({active = true}) => {
   const frame = useCurrentFrame();
   const x = interpolate(frame % 120, [0, 55, 120], [60, 62, 78], {
@@ -320,7 +451,7 @@ const WebsiteScanVisual: React.FC<{
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(localFrame, [0, 60, 150, 238], [0, 0, -24, 0], {
+    : interpolate(localFrame, [0, 52, 148, 182, 238], [0, 0, -28, -28, 0], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -330,7 +461,7 @@ const WebsiteScanVisual: React.FC<{
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(localFrame, [0, 60, 150, 238], [0.1, 0.1, 0.48, 0.1], {
+    : interpolate(localFrame, [0, 52, 148, 182, 238], [0.1, 0.1, 0.52, 0.52, 0.1], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -340,7 +471,7 @@ const WebsiteScanVisual: React.FC<{
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(localFrame, [0, 190], [-70, 560], {
+    : interpolate(localFrame, [0, 62, 170, 218], [-70, -70, 520, 520], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -350,7 +481,7 @@ const WebsiteScanVisual: React.FC<{
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(localFrame, [0, 36, 135, 190], [0, 0.25, 0.25, 0], {
+    : interpolate(localFrame, [0, 44, 155, 210], [0, 0.20, 0.20, 0], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -360,7 +491,7 @@ const WebsiteScanVisual: React.FC<{
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(localFrame, [0, 115, 238], [54, 66, 56], {
+    : interpolate(localFrame, [0, 120, 182, 238], [54, 68, 68, 56], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -662,9 +793,13 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
   const actionVisual = getVisual(input, ['primary_action', 'secondary_action', 'action_result', 'tag_assistant', 'ga4_debugview_or_gtm_preview'], 1);
   const src = getVisualSrc(actionVisual);
   const googleAdsPresent = hasGoogleAdsEvidence(input);
-  const confirmationText = googleAdsPresent
-    ? 'Expected event needs GA4, GTM and Google Ads account confirmation'
-    : 'Expected event needs GA4, GTM and backend confirmation';
+  const expectedObserved = isExpectedEventClearlyObserved(input);
+  const observedResult = input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved);
+  const confirmationText = expectedObserved
+    ? `${eventNameForCopy(input)} was clearly observed in the operator review context`
+    : googleAdsPresent
+      ? `${eventNameForCopy(input)} was not clearly observed; confirm it inside GA4, GTM and Google Ads`
+      : `${eventNameForCopy(input)} was not clearly observed; confirm it inside GA4, GTM and backend records`;
 
   return (
     <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
@@ -703,9 +838,31 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
                 </div>
               </FadeIn>
               <div style={{display: 'grid', gap: 12, marginTop: 24}}>
-                <FadeIn from={24}><MiniMetric label="Expected event" value={input.manualEvidence.expectedEvent || 'Expected event not provided'} tone="blue" /></FadeIn>
-                <FadeIn from={44}><MiniMetric label="Observed result" value={input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved)} tone="amber" /></FadeIn>
-                <FadeIn from={64}><MiniMetric label="Event confirmation" value={confirmationText} tone="red" /></FadeIn>
+                <EventValueCard
+                  label="Expected event"
+                  value={input.manualEvidence.expectedEvent || 'Expected event not provided'}
+                  tone="blue"
+                  delay={34}
+                  sceneStart={355}
+                  scanLabel="Detecting expected event"
+                />
+                <EventValueCard
+                  label="Observed result"
+                  value={observedResult}
+                  tone="amber"
+                  delay={72}
+                  sceneStart={355}
+                  scanLabel="Detecting observed result"
+                />
+                <EventValueCard
+                  label="Event confirmation"
+                  value={confirmationText}
+                  tone={expectedObserved ? 'green' : 'red'}
+                  delay={112}
+                  sceneStart={355}
+                  scanLabel="Comparing event signals"
+                  confirmed={expectedObserved}
+                />
               </div>
             </>
           )}
