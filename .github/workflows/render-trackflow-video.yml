@@ -1,0 +1,93 @@
+name: Render TrackFlow Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      demo_case:
+        description: "Demo case to render"
+        required: true
+        default: "ga4"
+        type: choice
+        options:
+          - ga4
+          - setup
+
+concurrency:
+  group: trackflow-video-render
+  cancel-in-progress: false
+
+jobs:
+  render:
+    name: Render encrypted demo video
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      AGE_RECIPIENT: ${{ secrets.TRACKFLOW_VIDEO_AGE_RECIPIENT || vars.TRACKFLOW_VIDEO_AGE_RECIPIENT }}
+
+    steps:
+      - name: Checkout generic renderer
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: remotion-video/package-lock.json
+
+      - name: Install renderer dependencies
+        working-directory: remotion-video
+        run: npm ci
+
+      - name: Select demo input
+        id: select_input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event.inputs.demo_case }}" = "setup" ]; then
+            echo "input_json=remotion-video/src/fixtures/no-ga4.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "input_json=remotion-video/src/fixtures/ga4-present.json" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render MP4
+        working-directory: remotion-video
+        run: |
+          set -euo pipefail
+          node scripts/render.mjs \
+            --input "../${{ steps.select_input.outputs.input_json }}" \
+            --output "./out/evidence-video.mp4"
+
+      - name: Install age
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y >/dev/null
+          sudo apt-get install -y age >/dev/null
+
+      - name: Encrypt MP4
+        working-directory: remotion-video
+        run: |
+          set -euo pipefail
+          if [ -z "${AGE_RECIPIENT}" ]; then
+            echo "TRACKFLOW_VIDEO_AGE_RECIPIENT is missing."
+            exit 1
+          fi
+          age --recipient "${AGE_RECIPIENT}" \
+            --output "./out/evidence-video.mp4.age" \
+            "./out/evidence-video.mp4"
+          rm -f "./out/evidence-video.mp4"
+
+      - name: Upload encrypted artifact only
+        uses: actions/upload-artifact@v4
+        with:
+          name: trackflow-video-${{ github.run_id }}
+          path: remotion-video/out/evidence-video.mp4.age
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove temporary render data
+        if: always()
+        run: |
+          rm -rf remotion-video/out
+          rm -rf /tmp/trackflow-video-*

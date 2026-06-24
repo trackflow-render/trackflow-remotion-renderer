@@ -1,0 +1,40 @@
+{
+  "schemaVersion": "trackflow-video-input-v1",
+  "jobId": "demo-no-ga4",
+  "businessName": "Example Local Business",
+  "domain": "example-business.com",
+  "websiteUrl": "https://example-business.com",
+  "reportMode": "tracking_foundation_setup",
+  "trackingCase": {
+    "mode": "tracking_foundation_setup"
+  },
+  "trackingSignals": {
+    "ga4": {
+      "detected": false,
+      "ids": []
+    },
+    "gtm": {
+      "detected": false,
+      "ids": []
+    },
+    "googleAds": {
+      "detected": false,
+      "ids": [],
+      "conversionRequestDetected": false
+    },
+    "metaPixel": {
+      "detected": false,
+      "ids": []
+    }
+  },
+  "manualEvidence": {
+    "businessName": "Example Local Business",
+    "actionLabel": "Contact Form Submission",
+    "expectedEvent": "",
+    "observedEvent": "",
+    "actionCompleted": "",
+    "toolUsed": ""
+  },
+  "visuals": [],
+  "clientSafeDisclaimer": "Browser-visible review only. Final account-side confirmation is still recommended."
+}

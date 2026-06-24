@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "trackflow-video-input-v1",
+  "jobId": "demo-ga4-present",
+  "businessName": "Example Dental Clinic",
+  "domain": "example-dental.com",
+  "websiteUrl": "https://example-dental.com",
+  "reportMode": "ga4_event_verification",
+  "trackingCase": {
+    "mode": "ga4_event_verification"
+  },
+  "trackingSignals": {
+    "ga4": {
+      "detected": true,
+      "ids": [
+        "G-EXAMPLE123"
+      ]
+    },
+    "gtm": {
+      "detected": true,
+      "ids": [
+        "GTM-EXAMPLE"
+      ]
+    },
+    "googleAds": {
+      "detected": true,
+      "ids": [
+        "AW-123456789"
+      ],
+      "conversionRequestDetected": false
+    },
+    "metaPixel": {
+      "detected": true,
+      "ids": [
+        "123456789012345"
+      ]
+    }
+  },
+  "manualEvidence": {
+    "businessName": "Example Dental Clinic",
+    "actionLabel": "Appointment Form Submission",
+    "expectedEvent": "generate_lead",
+    "observedEvent": "page_view only",
+    "actionCompleted": true,
+    "toolUsed": "Tag Assistant",
+    "ga4EventObserved": "not clearly observed",
+    "googleAdsConversionObserved": "not clearly observed",
+    "gtmTriggerObserved": "not clearly observed",
+    "testUrl": "https://example-dental.com/contact",
+    "operatorNote": "The action reached a completion state, but the expected event was not clearly observed."
+  },
+  "visuals": [],
+  "clientSafeDisclaimer": "Browser-visible review and operator-provided evidence only. Final account-side confirmation is still recommended."
+}

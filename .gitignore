@@ -1,0 +1,51 @@
+# Dependencies
+node_modules/
+remotion-video/node_modules/
+
+# Remotion build/render output
+remotion-video/out/
+remotion-video/.cache/
+remotion-video/.remotion/
+*.mp4
+*.webm
+*.mov
+*.avi
+*.mkv
+*.mp4.age
+
+# Real TrackFlow/client input packages
+*.zip
+trackflow-remotion-input-*.zip
+trackflow-video-input-*.zip
+video-input.json
+render-input/
+client-input/
+assets/
+real-assets/
+
+# Secrets / keys / env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*private-key*
+trackflow-video-private-key.txt
+age-identity.txt
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+tmp/
+temp/
+.cache/

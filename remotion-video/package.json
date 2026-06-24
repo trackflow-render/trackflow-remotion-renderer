@@ -1,0 +1,25 @@
+{
+  "name": "trackflow-remotion-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "studio": "remotion studio src/Root.tsx",
+    "render:demo:ga4": "remotion render src/Root.tsx TrackFlowEvidenceVideo out/ga4-present-demo.mp4 --props=src/fixtures/ga4-present.json",
+    "render:demo:setup": "remotion render src/Root.tsx TrackFlowEvidenceVideo out/setup-first-demo.mp4 --props=src/fixtures/no-ga4.json",
+    "doctor:renderer": "node -e \"console.log(require.resolve('@remotion/renderer'))\""
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.482",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "remotion": "4.0.482",
+    "@remotion/renderer": "4.0.482"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "@types/react": "19.2.6",
+    "@types/react-dom": "19.2.3",
+    "typescript": "5.9.3"
+  }
+}
