@@ -55,12 +55,19 @@ const getVisual = (
 const getVisualSrc = (visual?: TrackFlowVisualAsset): string =>
   safeAssetSrc(visual?.src || visual?.path || visual?.url);
 
+const hasSignalEvidence = (signal?: TrackFlowSignalStatus): boolean =>
+  Boolean(
+    signal?.detected ||
+      (signal?.ids || []).length > 0 ||
+      signal?.conversionRequestDetected ||
+      signal?.conversion_request_detected
+  );
+
 const signalColor = (signal?: TrackFlowSignalStatus): string =>
-  signal?.detected ? brand.green : brand.amber;
+  hasSignalEvidence(signal) ? brand.green : brand.amber;
 
 const signalStatus = (signal?: TrackFlowSignalStatus): string => {
-  if (signal?.note) return signal.note;
-  return signal?.detected
+  return hasSignalEvidence(signal)
     ? 'Detected during browser-visible review'
     : 'Not clearly detected during browser-side review';
 };
@@ -68,9 +75,15 @@ const signalStatus = (signal?: TrackFlowSignalStatus): string => {
 const formatIds = (signal?: TrackFlowSignalStatus): string => {
   const ids = signal?.ids || [];
   if (ids.length) return ids.join(', ');
-  if (signal?.conversionRequestDetected) return 'Conversion request observed';
+  if (signal?.conversionRequestDetected || signal?.conversion_request_detected) return 'Conversion request observed';
   return 'No browser-visible ID shown';
 };
+
+const hasGoogleAdsEvidence = (input: NormalizedTrackFlowVideoInput): boolean =>
+  hasSignalEvidence(input.trackingSignals.googleAds);
+
+const eventNameForCopy = (input: NormalizedTrackFlowVideoInput): string =>
+  input.manualEvidence.expectedEvent || 'the expected event';
 
 const formatStatus = (value: unknown, positiveText = 'Observed'): string => {
   const text = normalizeText(value, '', 60).toLowerCase();
@@ -297,40 +310,57 @@ const WebsiteScanVisual: React.FC<{
   subtitle: string;
   mode: 'homepage' | 'action';
   showClick?: boolean;
-}> = ({src, title, subtitle, mode, showClick = false}) => {
+  sceneStart?: number;
+}> = ({src, title, subtitle, mode, showClick = false, sceneStart}) => {
   const frame = useCurrentFrame();
-  const cycle = frame % 240;
+  const localFrame = Math.max(0, frame - (sceneStart ?? (mode === 'homepage' ? 80 : 355)));
+
   const scrollY = mode === 'homepage'
-    ? interpolate(cycle, [0, 42, 125, 185, 240], [0, 0, -38, -38, 0], {
+    ? interpolate(localFrame, [0, 52, 232, 275], [0, 0, -40, -40], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(cycle, [0, 55, 145, 240], [-8, -8, -28, -18], {
+    : interpolate(localFrame, [0, 60, 150, 238], [0, 0, -24, 0], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
 
   const scrollProgress = mode === 'homepage'
-    ? interpolate(cycle, [0, 42, 125, 185, 240], [0, 0, 0.72, 0.72, 0], {
+    ? interpolate(localFrame, [0, 52, 232, 275], [0.03, 0.03, 0.78, 0.78], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(cycle, [0, 55, 145, 240], [0.12, 0.12, 0.55, 0.36], {
+    : interpolate(localFrame, [0, 60, 150, 238], [0.1, 0.1, 0.48, 0.1], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
 
-  const scanY = interpolate(frame % 110, [0, 110], [-60, 610], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp'
-  });
-
-  const focusY = mode === 'homepage'
-    ? interpolate(cycle, [0, 80, 160, 240], [34, 52, 64, 36], {
+  const scanY = mode === 'homepage'
+    ? interpolate(localFrame, [0, 250], [-70, 610], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       })
-    : interpolate(cycle, [0, 90, 170, 240], [52, 60, 68, 56], {
+    : interpolate(localFrame, [0, 190], [-70, 560], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      });
+
+  const scanOpacity = mode === 'homepage'
+    ? interpolate(localFrame, [0, 28, 210, 250], [0, 0.9, 0.9, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      })
+    : interpolate(localFrame, [0, 36, 135, 190], [0, 0.25, 0.25, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      });
+
+  const focusY = mode === 'homepage'
+    ? interpolate(localFrame, [0, 105, 220], [34, 54, 68], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      })
+    : interpolate(localFrame, [0, 115, 238], [54, 66, 56], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -388,7 +418,7 @@ const WebsiteScanVisual: React.FC<{
               letterSpacing: 0.3
             }}
           >
-            {mode === 'homepage' ? 'Scanning page structure' : 'Opening selected action path'}
+            {mode === 'homepage' ? 'Reviewing page structure' : 'Opening selected action path'}
           </div>
         </div>
 
@@ -418,9 +448,9 @@ const WebsiteScanVisual: React.FC<{
                   top: `${focusY}%`,
                   height: mode === 'homepage' ? 78 : 96,
                   borderRadius: 18,
-                  border: '2px solid rgba(56,189,248,.58)',
-                  boxShadow: '0 0 25px rgba(56,189,248,.25)',
-                  background: 'rgba(56,189,248,.055)'
+                  border: `2px solid ${mode === 'homepage' ? 'rgba(56,189,248,.58)' : 'rgba(56,189,248,.34)'}`,
+                  boxShadow: mode === 'homepage' ? '0 0 25px rgba(56,189,248,.25)' : '0 0 18px rgba(56,189,248,.14)',
+                  background: mode === 'homepage' ? 'rgba(56,189,248,.055)' : 'rgba(56,189,248,.035)'
                 }}
               />
               <div
@@ -430,6 +460,7 @@ const WebsiteScanVisual: React.FC<{
                   right: 0,
                   top: scanY,
                   height: 88,
+                  opacity: scanOpacity,
                   background: 'linear-gradient(180deg, transparent, rgba(56,189,248,.34), transparent)',
                   mixBlendMode: 'screen',
                   filter: 'blur(1px)'
@@ -511,7 +542,7 @@ const WebsiteScanVisual: React.FC<{
           }}
         >
           <span style={{width: 8, height: 8, borderRadius: 999, background: brand.green, boxShadow: '0 0 14px rgba(34,197,94,.65)'}} />
-          Live scan
+          {mode === 'homepage' ? 'Page scan' : 'Action path'}
         </div>
         <div style={{color: brand.white, fontSize: 27, fontWeight: 930, letterSpacing: -0.4}}>
           {title}
@@ -590,6 +621,7 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
           title={input.businessName}
           subtitle="Website structure and tag signals"
           mode="homepage"
+          sceneStart={80}
         />
 
         <div style={{position: 'relative', background: brand.panel, border: `1px solid ${brand.line}`, borderRadius: 28, padding: 22, overflow: 'hidden', boxShadow: '0 28px 90px rgba(0,0,0,.32)'}}>
@@ -614,7 +646,7 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
               <div style={{marginTop: 16}}>
                 <MiniMetric
                   label={setupFirst ? 'Current finding' : 'Action focus'}
-                  value={setupFirst ? 'GA4/GTM foundation needs verification' : input.manualEvidence.actionLabel}
+                  value={setupFirst ? 'GA4 tracking foundation needs verification' : input.manualEvidence.actionLabel}
                   tone={setupFirst ? 'amber' : 'blue'}
                 />
               </div>
@@ -629,6 +661,10 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
 const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
   const actionVisual = getVisual(input, ['primary_action', 'secondary_action', 'action_result', 'tag_assistant', 'ga4_debugview_or_gtm_preview'], 1);
   const src = getVisualSrc(actionVisual);
+  const googleAdsPresent = hasGoogleAdsEvidence(input);
+  const confirmationText = googleAdsPresent
+    ? 'Expected event needs GA4, GTM and Google Ads account confirmation'
+    : 'Expected event needs GA4, GTM and backend confirmation';
 
   return (
     <AbsoluteFill style={{background: '#06111f', color: brand.text, padding: '86px 34px 30px'}}>
@@ -640,6 +676,7 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
           subtitle={setupFirst ? 'Event testing comes after setup is confirmed' : `Tool: ${input.manualEvidence.toolUsed || 'Tag Assistant'}`}
           mode="action"
           showClick={!setupFirst}
+          sceneStart={355}
         />
 
         <div style={{background: brand.panel, border: `1px solid ${brand.line}`, borderRadius: 28, padding: 28, boxShadow: '0 28px 90px rgba(0,0,0,.32)', display: 'flex', flexDirection: 'column', justifyContent: 'center'}}>
@@ -648,12 +685,12 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
               <FadeIn from={0}>
                 <div style={{color: brand.amber, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.6}}>Main issue</div>
                 <div style={{color: brand.text, fontSize: 42, lineHeight: 1.04, fontWeight: 950, letterSpacing: -1.5, marginTop: 10}}>
-                  GA4/GTM tracking foundation was not clearly detected.
+                  GA4 tracking foundation needs verification.
                 </div>
               </FadeIn>
               <div style={{display: 'grid', gap: 12, marginTop: 26}}>
                 <FadeIn from={24}><MiniMetric label="Step 1" value="Confirm GTM / Google tag path" tone="amber" /></FadeIn>
-                <FadeIn from={44}><MiniMetric label="Step 2" value="Verify GA4 page_view activity" tone="blue" /></FadeIn>
+                <FadeIn from={44}><MiniMetric label="Step 2" value="Install or verify GA4 page_view activity" tone="blue" /></FadeIn>
                 <FadeIn from={64}><MiniMetric label="Future test target" value={input.manualEvidence.futureTestTarget || input.manualEvidence.actionLabel} tone="green" /></FadeIn>
               </div>
             </>
@@ -668,7 +705,7 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
               <div style={{display: 'grid', gap: 12, marginTop: 24}}>
                 <FadeIn from={24}><MiniMetric label="Expected event" value={input.manualEvidence.expectedEvent || 'Expected event not provided'} tone="blue" /></FadeIn>
                 <FadeIn from={44}><MiniMetric label="Observed result" value={input.manualEvidence.observedEvent || formatStatus(input.manualEvidence.ga4EventObserved)} tone="amber" /></FadeIn>
-                <FadeIn from={64}><MiniMetric label="GTM / Ads status" value={`GTM: ${formatStatus(input.manualEvidence.gtmTriggerObserved)} · Ads: ${formatStatus(input.manualEvidence.googleAdsConversionObserved)}`} tone="red" /></FadeIn>
+                <FadeIn from={64}><MiniMetric label="Event confirmation" value={confirmationText} tone="red" /></FadeIn>
               </div>
             </>
           )}
@@ -678,48 +715,58 @@ const EventScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: bo
   );
 };
 
-const FinalScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => (
-  <AbsoluteFill
-    style={{
-      background:
-        'radial-gradient(circle at 18% 18%, rgba(56,189,248,.18), transparent 34%), radial-gradient(circle at 82% 18%, rgba(34,197,94,.14), transparent 36%), #06111f',
-      color: brand.text,
-      padding: 68,
-      justifyContent: 'center'
-    }}
-  >
-    <FadeIn from={0}>
-      <div style={{color: brand.blue, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 2}}>
-        Recommended next step
-      </div>
-    </FadeIn>
-    <FadeIn from={14}>
-      <div style={{fontSize: 52, lineHeight: 1.03, fontWeight: 950, letterSpacing: -1.8, marginTop: 16, maxWidth: 1040}}>
-        {setupFirst
-          ? 'Verify the tracking foundation first, then test the selected business action.'
-          : `Confirm ${input.manualEvidence.expectedEvent || 'the expected event'} inside GA4, GTM, Google Ads, and backend records.`}
-      </div>
-    </FadeIn>
-    <FadeIn from={42}>
-      <div style={{marginTop: 30, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16}}>
-        {(setupFirst
-          ? ['GTM / Google tag', 'GA4 page activity', 'Controlled event test']
-          : ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM']
-        ).map((item) => (
-          <div key={item} style={{background: brand.panelSoft, border: `1px solid ${brand.line}`, borderRadius: 20, padding: 20, minHeight: 94}}>
-            <div style={{width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', border: '1px solid rgba(34,197,94,.48)', color: brand.green, fontWeight: 950}}>✓</div>
-            <div style={{fontSize: 21, lineHeight: 1.18, fontWeight: 850, marginTop: 12}}>{item}</div>
-          </div>
-        ))}
-      </div>
-    </FadeIn>
-    <FadeIn from={64}>
-      <div style={{marginTop: 28, color: brand.muted, fontSize: 17, maxWidth: 960, lineHeight: 1.35}}>
-        {input.clientSafeDisclaimer}
-      </div>
-    </FadeIn>
-  </AbsoluteFill>
-);
+const FinalScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boolean}> = ({input, setupFirst}) => {
+  const googleAdsPresent = hasGoogleAdsEvidence(input);
+  const expectedEvent = eventNameForCopy(input);
+  const finalHeadline = setupFirst
+    ? 'Verify the tracking foundation first, then test the selected business action.'
+    : googleAdsPresent
+      ? `Confirm ${expectedEvent} inside GA4, GTM, Google Ads, and backend records.`
+      : `Confirm ${expectedEvent} inside GA4, GTM, and backend records.`;
+  const steps = setupFirst
+    ? ['GTM / Google tag', 'GA4 page activity', 'Controlled event test']
+    : googleAdsPresent
+      ? ['GA4 DebugView', 'GTM Preview', 'Google Ads / CRM']
+      : ['GA4 DebugView', 'GTM Preview', 'CRM / backend records'];
+
+  return (
+    <AbsoluteFill
+      style={{
+        background:
+          'radial-gradient(circle at 18% 18%, rgba(56,189,248,.18), transparent 34%), radial-gradient(circle at 82% 18%, rgba(34,197,94,.14), transparent 36%), #06111f',
+        color: brand.text,
+        padding: 68,
+        justifyContent: 'center'
+      }}
+    >
+      <FadeIn from={0}>
+        <div style={{color: brand.blue, fontSize: 15, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 2}}>
+          Recommended next step
+        </div>
+      </FadeIn>
+      <FadeIn from={14}>
+        <div style={{fontSize: 52, lineHeight: 1.03, fontWeight: 950, letterSpacing: -1.8, marginTop: 16, maxWidth: 1040}}>
+          {finalHeadline}
+        </div>
+      </FadeIn>
+      <FadeIn from={42}>
+        <div style={{marginTop: 30, display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16}}>
+          {steps.map((item) => (
+            <div key={item} style={{background: brand.panelSoft, border: `1px solid ${brand.line}`, borderRadius: 20, padding: 20, minHeight: 94}}>
+              <div style={{width: 30, height: 30, borderRadius: 999, display: 'grid', placeItems: 'center', border: '1px solid rgba(34,197,94,.48)', color: brand.green, fontWeight: 950}}>✓</div>
+              <div style={{fontSize: 21, lineHeight: 1.18, fontWeight: 850, marginTop: 12}}>{item}</div>
+            </div>
+          ))}
+        </div>
+      </FadeIn>
+      <FadeIn from={64}>
+        <div style={{marginTop: 28, color: brand.muted, fontSize: 17, maxWidth: 960, lineHeight: 1.35}}>
+          {input.clientSafeDisclaimer}
+        </div>
+      </FadeIn>
+    </AbsoluteFill>
+  );
+};
 
 export const TrackFlowEvidenceVideo: React.FC<TrackFlowVideoInput> = (props) => {
   const input = normalizeVideoInput(props);
