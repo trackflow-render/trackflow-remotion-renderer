@@ -103,37 +103,84 @@ const FadeIn: React.FC<{children: React.ReactNode; from: number; duration?: numb
   return <div style={{opacity, transform: `translateY(${translateY}px)`}}>{children}</div>;
 };
 
-const SignalCard: React.FC<{label: string; signal?: TrackFlowSignalStatus; delay: number}> = ({
-  label,
-  signal,
-  delay
-}) => {
+const SignalCard: React.FC<{
+  label: string;
+  signal?: TrackFlowSignalStatus;
+  delay: number;
+  sceneStart?: number;
+}> = ({label, signal, delay, sceneStart = 80}) => {
   const frame = useCurrentFrame();
+  const localFrame = frame - sceneStart;
+  const cardFrame = Math.max(0, localFrame - delay);
   const progress = spring({
-    frame: Math.max(0, frame - delay),
+    frame: cardFrame,
     fps: 30,
-    config: {damping: 16, stiffness: 125, mass: 0.75}
+    config: {damping: 13, stiffness: 170, mass: 0.62}
   });
   const detected = Boolean(signal?.detected);
   const color = signalColor(signal);
+  const scanning = localFrame >= delay && localFrame < delay + 18;
+  const iconReady = localFrame >= delay + 14;
+  const pulse = interpolate(cardFrame % 46, [0, 7, 18, 46], [0, 1, 0.35, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const scanSweepX = interpolate(cardFrame % 62, [0, 62], [-70, 360], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const scale = interpolate(progress, [0, 0.55, 1], [0.92, 1.035, 1], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotOne = interpolate(cardFrame % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotTwo = interpolate((cardFrame + 12) % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
+  const dotThree = interpolate((cardFrame + 24) % 36, [0, 9, 18, 36], [0.25, 1, 0.25, 0.25], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp'
+  });
 
   return (
     <div
       style={{
+        position: 'relative',
         opacity: progress,
-        transform: `translateX(${interpolate(progress, [0, 1], [34, 0])}px)`,
-        border: `1px solid ${detected ? 'rgba(34,197,94,.38)' : 'rgba(245,158,11,.38)'}`,
+        transform: `translateX(${interpolate(progress, [0, 1], [38, 0])}px) scale(${scale})`,
+        border: `1px solid ${detected ? 'rgba(34,197,94,.42)' : 'rgba(245,158,11,.42)'}`,
         background: detected ? 'rgba(34,197,94,.095)' : 'rgba(245,158,11,.095)',
         borderRadius: 16,
         padding: '12px 14px',
         display: 'grid',
         gridTemplateColumns: '30px 1fr',
         gap: 10,
-        alignItems: 'center'
+        alignItems: 'center',
+        boxShadow: `0 0 ${10 + pulse * 24}px ${detected ? 'rgba(34,197,94,.22)' : 'rgba(245,158,11,.18)'}`,
+        overflow: 'hidden',
+        willChange: 'transform, opacity'
       }}
     >
       <div
         style={{
+          position: 'absolute',
+          top: 0,
+          bottom: 0,
+          left: scanSweepX,
+          width: 72,
+          background: 'linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent)',
+          transform: 'skewX(-18deg)',
+          opacity: localFrame >= delay ? 0.9 : 0,
+          pointerEvents: 'none'
+        }}
+      />
+      <div
+        style={{
+          position: 'relative',
           width: 28,
           height: 28,
           borderRadius: 999,
@@ -142,18 +189,39 @@ const SignalCard: React.FC<{label: string; signal?: TrackFlowSignalStatus; delay
           color,
           border: `1px solid ${color}`,
           fontSize: 17,
-          fontWeight: 950
+          fontWeight: 950,
+          background: 'rgba(2,6,23,.36)',
+          boxShadow: `0 0 ${12 + pulse * 16}px ${detected ? 'rgba(34,197,94,.36)' : 'rgba(245,158,11,.30)'}`
         }}
       >
-        {detected ? '✓' : '!'}
+        <div
+          style={{
+            position: 'absolute',
+            inset: -7,
+            borderRadius: 999,
+            border: `1px solid ${color}`,
+            opacity: pulse * 0.55,
+            transform: `scale(${1 + pulse * 0.38})`
+          }}
+        />
+        {iconReady ? (detected ? '✓' : '!') : '•'}
       </div>
-      <div style={{minWidth: 0}}>
+      <div style={{minWidth: 0, position: 'relative', zIndex: 2}}>
         <div style={{fontSize: 17, fontWeight: 900, color: brand.text, lineHeight: 1.05}}>{label}</div>
         <div style={{fontSize: 12, fontWeight: 750, color, marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
-          {signalStatus(signal)}
+          {scanning ? (
+            <span>
+              Scanning signal
+              <span style={{opacity: dotOne}}>.</span>
+              <span style={{opacity: dotTwo}}>.</span>
+              <span style={{opacity: dotThree}}>.</span>
+            </span>
+          ) : (
+            signalStatus(signal)
+          )}
         </div>
         <div style={{fontSize: 11, color: brand.muted, marginTop: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'}}>
-          {formatIds(signal)}
+          {iconReady ? formatIds(signal) : 'Reading browser-visible tag data'}
         </div>
       </div>
     </div>
@@ -238,6 +306,16 @@ const WebsiteScanVisual: React.FC<{
         extrapolateRight: 'clamp'
       })
     : interpolate(cycle, [0, 55, 145, 240], [-8, -8, -28, -18], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      });
+
+  const scrollProgress = mode === 'homepage'
+    ? interpolate(cycle, [0, 42, 125, 185, 240], [0, 0, 0.72, 0.72, 0], {
+        extrapolateLeft: 'clamp',
+        extrapolateRight: 'clamp'
+      })
+    : interpolate(cycle, [0, 55, 145, 240], [0.12, 0.12, 0.55, 0.36], {
         extrapolateLeft: 'clamp',
         extrapolateRight: 'clamp'
       });
@@ -357,6 +435,32 @@ const WebsiteScanVisual: React.FC<{
                   filter: 'blur(1px)'
                 }}
               />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 48,
+                  right: 10,
+                  bottom: 12,
+                  width: 7,
+                  borderRadius: 999,
+                  background: 'rgba(15,23,42,.58)',
+                  border: '1px solid rgba(226,232,240,.14)',
+                  boxShadow: '0 0 16px rgba(0,0,0,.24)'
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 1,
+                    right: 1,
+                    height: '25%',
+                    top: `${5 + scrollProgress * 68}%`,
+                    borderRadius: 999,
+                    background: 'linear-gradient(180deg, rgba(56,189,248,.95), rgba(34,197,94,.85))',
+                    boxShadow: '0 0 16px rgba(56,189,248,.48)'
+                  }}
+                />
+              </div>
               {showClick && <ScanCursor />}
             </>
           ) : (
@@ -491,14 +595,20 @@ const ScanScene: React.FC<{input: NormalizedTrackFlowVideoInput; setupFirst: boo
         <div style={{position: 'relative', background: brand.panel, border: `1px solid ${brand.line}`, borderRadius: 28, padding: 22, overflow: 'hidden', boxShadow: '0 28px 90px rgba(0,0,0,.32)'}}>
           <div style={{position: 'absolute', inset: 0, background: 'radial-gradient(circle at 20% 0%, rgba(56,189,248,.15), transparent 40%)'}} />
           <div style={{position: 'relative', zIndex: 2}}>
-            <div style={{fontSize: 15, color: brand.blue, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.8, marginBottom: 14}}>
-              Detected signals
+            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14}}>
+              <div style={{fontSize: 15, color: brand.blue, fontWeight: 950, textTransform: 'uppercase', letterSpacing: 1.8}}>
+                Detected signals
+              </div>
+              <div style={{display: 'inline-flex', alignItems: 'center', gap: 6, color: brand.muted, fontSize: 11, fontWeight: 800, letterSpacing: .8, textTransform: 'uppercase'}}>
+                <span style={{width: 7, height: 7, borderRadius: 999, background: brand.green, boxShadow: '0 0 12px rgba(34,197,94,.75)'}} />
+                scanning
+              </div>
             </div>
             <div style={{display: 'grid', gap: 10}}>
-              <SignalCard label="GA4" signal={input.trackingSignals.ga4} delay={10} />
-              <SignalCard label="GTM" signal={input.trackingSignals.gtm} delay={24} />
-              <SignalCard label="Google Ads" signal={input.trackingSignals.googleAds} delay={38} />
-              <SignalCard label="Meta Pixel" signal={input.trackingSignals.metaPixel} delay={52} />
+              <SignalCard label="GA4" signal={input.trackingSignals.ga4} delay={18} sceneStart={80} />
+              <SignalCard label="GTM" signal={input.trackingSignals.gtm} delay={48} sceneStart={80} />
+              <SignalCard label="Google Ads" signal={input.trackingSignals.googleAds} delay={78} sceneStart={80} />
+              <SignalCard label="Meta Pixel" signal={input.trackingSignals.metaPixel} delay={108} sceneStart={80} />
             </div>
             <FadeIn from={74}>
               <div style={{marginTop: 16}}>
