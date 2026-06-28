@@ -25,6 +25,23 @@ const getArg = (name, fallback = '') => {
   return fallback;
 };
 
+
+const envFlagEnabled = (name, fallback = true) => {
+  const value = String(process.env[name] ?? '').trim().toLowerCase();
+  if (!value) return fallback;
+  return !['0', 'false', 'no', 'off'].includes(value);
+};
+
+const envNumber = (name, fallback, min, max) => {
+  const raw = String(process.env[name] ?? '').trim();
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+};
+
+const envText = (name, fallback = '') => String(process.env[name] ?? fallback).trim();
+
 const inputPath = resolve(getArg('input', ''));
 const explicitInputRoot = getArg('input-root', '');
 const outputPath = resolve(getArg('output', 'out/evidence-video.mp4'));
@@ -230,17 +247,35 @@ const remotionBin = process.platform === 'win32'
   ? 'node_modules/.bin/remotion.cmd'
   : 'node_modules/.bin/remotion';
 
+const renderArgs = [
+  'render',
+  'src/Root.tsx',
+  'TrackFlowEvidenceVideo',
+  outputPath,
+  `--props=${sanitizedInputPath}`,
+  '--codec=h264',
+  '--overwrite'
+];
+
+// Speed/download-size optimization is controlled by environment variables so the
+// workflow can be tuned without changing client data or report logic.
+if (envFlagEnabled('TRACKFLOW_VIDEO_RENDER_FAST_MODE', true)) {
+  const crf = envNumber('TRACKFLOW_VIDEO_RENDER_CRF', 28, 18, 38);
+  renderArgs.push(`--crf=${crf}`);
+
+  const jpegQuality = envNumber('TRACKFLOW_VIDEO_RENDER_JPEG_QUALITY', 78, 40, 95);
+  renderArgs.push(`--jpeg-quality=${jpegQuality}`);
+}
+
+const concurrency = envText('TRACKFLOW_VIDEO_RENDER_CONCURRENCY');
+if (concurrency) renderArgs.push(`--concurrency=${concurrency}`);
+
+console.log('[TrackFlow Render] Renderer mode:', envFlagEnabled('TRACKFLOW_VIDEO_RENDER_FAST_MODE', true) ? 'optimized' : 'default');
+console.log('[TrackFlow Render] Client data and asset paths remain hidden.');
+
 const result = spawnSync(
   remotionBin,
-  [
-    'render',
-    'src/Root.tsx',
-    'TrackFlowEvidenceVideo',
-    outputPath,
-    `--props=${sanitizedInputPath}`,
-    '--codec=h264',
-    '--overwrite'
-  ],
+  renderArgs,
   {
     cwd,
     stdio: 'inherit',
